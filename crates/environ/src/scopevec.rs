@@ -1,5 +1,4 @@
-use crate::prelude::*;
-use core::cell::RefCell;
+use std::cell::RefCell;
 
 /// Small data structure to help extend the lifetime of a slice to a higher
 /// scope.
@@ -55,14 +54,13 @@ impl<T> ScopeVec<T> {
         //
         // This all means that it should be safe to return a mutable slice of
         // all of `data` after the data has been pushed onto our internal list.
-        unsafe { core::slice::from_raw_parts_mut(ptr, len) }
+        unsafe { std::slice::from_raw_parts_mut(ptr, len) }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::ScopeVec;
-    use crate::prelude::*;
 
     #[test]
     fn smoke() {

@@ -1,9 +1,9 @@
-use crate::prelude::*;
+use std::{collections::HashMap, fmt};
+
 use crate::{
     store::StoreOpaque, AsContextMut, FrameInfo, Global, HeapType, Instance, Memory, Module,
     StoreContextMut, Val, ValType, WasmBacktrace,
 };
-use std::{collections::HashMap, fmt};
 
 /// Representation of a core dump of a WebAssembly module
 ///

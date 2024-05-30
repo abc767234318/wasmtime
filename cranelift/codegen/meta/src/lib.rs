@@ -1,8 +1,6 @@
 //! This crate generates Rust sources for use by
 //! [`cranelift_codegen`](../cranelift_codegen/index.html).
 
-use shared::Definitions;
-
 #[macro_use]
 mod cdsl;
 mod srcgen;
@@ -12,7 +10,6 @@ pub mod isa;
 pub mod isle;
 
 mod gen_inst;
-mod gen_isle;
 mod gen_settings;
 mod gen_types;
 
@@ -26,23 +23,16 @@ pub fn isa_from_arch(arch: &str) -> Result<isa::Isa, String> {
 }
 
 /// Generates all the Rust source files used in Cranelift from the meta-language.
-pub fn generate_rust(isas: &[isa::Isa], out_dir: &std::path::Path) -> Result<(), error::Error> {
+pub fn generate(isas: &[isa::Isa], out_dir: &str, isle_dir: &str) -> Result<(), error::Error> {
+    // Common definitions.
     let shared_defs = shared::define();
-    generate_rust_for_shared_defs(&shared_defs, isas, out_dir)
-}
 
-fn generate_rust_for_shared_defs(
-    shared_defs: &Definitions,
-    isas: &[isa::Isa],
-    out_dir: &std::path::Path,
-) -> Result<(), error::Error> {
     gen_settings::generate(
         &shared_defs.settings,
         gen_settings::ParentGroup::None,
         "settings.rs",
         out_dir,
     )?;
-
     gen_types::generate("types.rs", out_dir)?;
 
     gen_inst::generate(
@@ -50,7 +40,10 @@ fn generate_rust_for_shared_defs(
         &shared_defs.all_instructions,
         "opcodes.rs",
         "inst_builder.rs",
+        "clif_opt.isle",
+        "clif_lower.isle",
         out_dir,
+        isle_dir,
     )?;
 
     // Per ISA definitions.
@@ -63,36 +56,5 @@ fn generate_rust_for_shared_defs(
         )?;
     }
 
-    Ok(())
-}
-
-/// Generates all the ISLE source files used in Cranelift from the meta-language.
-pub fn generate_isle(isle_dir: &std::path::Path) -> Result<(), error::Error> {
-    let shared_defs = shared::define();
-    generate_isle_for_shared_defs(&shared_defs, isle_dir)
-}
-
-fn generate_isle_for_shared_defs(
-    shared_defs: &Definitions,
-    isle_dir: &std::path::Path,
-) -> Result<(), error::Error> {
-    gen_isle::generate(
-        &shared_defs.all_formats,
-        &shared_defs.all_instructions,
-        "clif_opt.isle",
-        "clif_lower.isle",
-        isle_dir,
-    )
-}
-
-/// Generates all the source files used in Cranelift from the meta-language.
-pub fn generate(
-    isas: &[isa::Isa],
-    out_dir: &std::path::Path,
-    isle_dir: &std::path::Path,
-) -> Result<(), error::Error> {
-    let shared_defs = shared::define();
-    generate_rust_for_shared_defs(&shared_defs, isas, out_dir)?;
-    generate_isle_for_shared_defs(&shared_defs, isle_dir)?;
     Ok(())
 }

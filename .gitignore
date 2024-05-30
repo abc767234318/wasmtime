@@ -23,4 +23,3 @@ vendor
 examples/build
 examples/.cache
 *.coredump
-crates/explorer/node_modules

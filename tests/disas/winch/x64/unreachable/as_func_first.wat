@@ -6,7 +6,7 @@
     (unreachable) (i32.const -1)
   )
 )
-;; wasm[0]::function[0]::dummy:
+;; wasm[0]::function[0]:
 ;;       pushq   %rbp
 ;;       movq    %rsp, %rbp
 ;;       movq    8(%rdi), %r11

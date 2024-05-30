@@ -1,7 +1,6 @@
 //! Data structures to provide transformation of the source
 
 use crate::obj::ELF_WASMTIME_ADDRMAP;
-use crate::prelude::*;
 use crate::InstructionAddressMap;
 use object::write::{Object, StandardSegment};
 use object::{LittleEndian, SectionKind, U32Bytes};
@@ -21,7 +20,7 @@ pub struct AddressMapSection {
 
 impl AddressMapSection {
     /// Pushes a new set of instruction mapping information for a function added
-    /// in the executable.
+    /// in the exectuable.
     ///
     /// The `func` argument here is the range of the function, relative to the
     /// start of the text section in the executable. The `instrs` provided are

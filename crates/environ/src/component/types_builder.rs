@@ -1,11 +1,11 @@
 use crate::component::*;
-use crate::prelude::*;
 use crate::{
     CompiledModuleInfo, EntityType, Module, ModuleTypes, ModuleTypesBuilder, PrimaryMap,
     TypeConvert, WasmHeapType, WasmValType,
 };
 use anyhow::{bail, Result};
 use cranelift_entity::EntityRef;
+use indexmap::{IndexMap, IndexSet};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::Index;
@@ -173,12 +173,13 @@ impl ComponentTypesBuilder {
     pub fn find_resource_drop_signature(&self) -> Option<ModuleInternedTypeIndex> {
         self.module_types
             .wasm_types()
-            .find(|(_, ty)| {
-                ty.as_func().map_or(false, |sig| {
+            .find(|(_, ty)| match &ty.composite_type {
+                wasmtime_types::WasmCompositeType::Array(_) => false,
+                wasmtime_types::WasmCompositeType::Func(sig) => {
                     sig.params().len() == 1
                         && sig.returns().len() == 0
                         && sig.params()[0] == WasmValType::I32
-                })
+                }
             })
             .map(|(i, _)| i)
     }
@@ -379,7 +380,7 @@ impl ComponentTypesBuilder {
                     .intern_type(&module, types, *id)?
                     .into()
             }),
-            types::EntityType::Table(ty) => EntityType::Table(self.convert_table_type(ty)?),
+            types::EntityType::Table(ty) => EntityType::Table(self.convert_table_type(ty)),
             types::EntityType::Memory(ty) => EntityType::Memory(ty.clone().into()),
             types::EntityType::Global(ty) => EntityType::Global(self.convert_global_type(ty)),
             types::EntityType::Tag(_) => bail!("exceptions proposal not implemented"),
@@ -517,7 +518,7 @@ impl ComponentTypesBuilder {
         self.add_tuple_type(TypeTuple { types, abi })
     }
 
-    fn flags_type(&mut self, flags: &IndexSet<KebabString>) -> TypeFlagsIndex {
+    fn flags_type(&mut self, flags: &wasmparser::map::IndexSet<KebabString>) -> TypeFlagsIndex {
         let flags = TypeFlags {
             names: flags.iter().map(|s| s.to_string()).collect(),
             abi: CanonicalAbiInfo::flags(flags.len()),
@@ -525,7 +526,7 @@ impl ComponentTypesBuilder {
         self.add_flags_type(flags)
     }
 
-    fn enum_type(&mut self, variants: &IndexSet<KebabString>) -> TypeEnumIndex {
+    fn enum_type(&mut self, variants: &wasmparser::map::IndexSet<KebabString>) -> TypeEnumIndex {
         let names = variants
             .iter()
             .map(|s| s.to_string())
@@ -702,13 +703,6 @@ impl ComponentTypesBuilder {
 impl TypeConvert for ComponentTypesBuilder {
     fn lookup_heap_type(&self, _index: wasmparser::UnpackedIndex) -> WasmHeapType {
         panic!("heap types are not supported yet")
-    }
-
-    fn lookup_type_index(
-        &self,
-        _index: wasmparser::UnpackedIndex,
-    ) -> wasmtime_types::EngineOrModuleTypeIndex {
-        panic!("typed references are not supported yet")
     }
 }
 

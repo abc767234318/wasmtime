@@ -19,7 +19,7 @@ use wasmtime_wasi::{
     Pollable, ResourceTableError,
 };
 
-impl crate::bindings::http::types::Host for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::Host for T {
     fn convert_error_code(&mut self, err: crate::HttpError) -> wasmtime::Result<types::ErrorCode> {
         err.downcast()
     }
@@ -98,7 +98,7 @@ fn get_fields_mut<'a>(
     }
 }
 
-impl crate::bindings::http::types::HostFields for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::HostFields for T {
     fn new(&mut self) -> wasmtime::Result<Resource<HostFields>> {
         let id = self
             .table()
@@ -285,7 +285,7 @@ impl crate::bindings::http::types::HostFields for dyn WasiHttpView + '_ {
     }
 }
 
-impl crate::bindings::http::types::HostIncomingRequest for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::HostIncomingRequest for T {
     fn method(&mut self, id: Resource<HostIncomingRequest>) -> wasmtime::Result<Method> {
         let method = self.table().get(&id)?.parts.method.clone();
         Ok(method.into())
@@ -370,7 +370,7 @@ impl crate::bindings::http::types::HostIncomingRequest for dyn WasiHttpView + '_
     }
 }
 
-impl crate::bindings::http::types::HostOutgoingRequest for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::HostOutgoingRequest for T {
     fn new(
         &mut self,
         headers: Resource<Headers>,
@@ -556,7 +556,7 @@ impl crate::bindings::http::types::HostOutgoingRequest for dyn WasiHttpView + '_
     }
 }
 
-impl crate::bindings::http::types::HostResponseOutparam for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::HostResponseOutparam for T {
     fn drop(&mut self, id: Resource<HostResponseOutparam>) -> wasmtime::Result<()> {
         let _ = self.table().delete(id)?;
         Ok(())
@@ -579,7 +579,7 @@ impl crate::bindings::http::types::HostResponseOutparam for dyn WasiHttpView + '
     }
 }
 
-impl crate::bindings::http::types::HostIncomingResponse for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::HostIncomingResponse for T {
     fn drop(&mut self, response: Resource<HostIncomingResponse>) -> wasmtime::Result<()> {
         let _ = self
             .table()
@@ -640,7 +640,7 @@ impl crate::bindings::http::types::HostIncomingResponse for dyn WasiHttpView + '
     }
 }
 
-impl crate::bindings::http::types::HostFutureTrailers for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::HostFutureTrailers for T {
     fn drop(&mut self, id: Resource<HostFutureTrailers>) -> wasmtime::Result<()> {
         let _ = self
             .table()
@@ -687,7 +687,7 @@ impl crate::bindings::http::types::HostFutureTrailers for dyn WasiHttpView + '_ 
     }
 }
 
-impl crate::bindings::http::types::HostIncomingBody for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::HostIncomingBody for T {
     fn stream(
         &mut self,
         id: Resource<HostIncomingBody>,
@@ -718,7 +718,7 @@ impl crate::bindings::http::types::HostIncomingBody for dyn WasiHttpView + '_ {
     }
 }
 
-impl crate::bindings::http::types::HostOutgoingResponse for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::HostOutgoingResponse for T {
     fn new(
         &mut self,
         headers: Resource<Headers>,
@@ -807,7 +807,7 @@ impl crate::bindings::http::types::HostOutgoingResponse for dyn WasiHttpView + '
     }
 }
 
-impl crate::bindings::http::types::HostFutureIncomingResponse for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::HostFutureIncomingResponse for T {
     fn drop(&mut self, id: Resource<HostFutureIncomingResponse>) -> wasmtime::Result<()> {
         let _ = self.table().delete(id)?;
         Ok(())
@@ -866,7 +866,7 @@ impl crate::bindings::http::types::HostFutureIncomingResponse for dyn WasiHttpVi
     }
 }
 
-impl crate::bindings::http::types::HostOutgoingBody for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::HostOutgoingBody for T {
     fn write(
         &mut self,
         id: Resource<HostOutgoingBody>,
@@ -903,7 +903,7 @@ impl crate::bindings::http::types::HostOutgoingBody for dyn WasiHttpView + '_ {
     }
 }
 
-impl crate::bindings::http::types::HostRequestOptions for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> crate::bindings::http::types::HostRequestOptions for T {
     fn new(&mut self) -> wasmtime::Result<Resource<types::RequestOptions>> {
         let id = self.table().push(types::RequestOptions::default())?;
         Ok(id)

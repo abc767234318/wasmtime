@@ -39,5 +39,4 @@
 /winch/     @bytecodealliance/wasmtime-compiler-reviewers
 
 # Fuzz testing
-/fuzz/          @bytecodealliance/wasmtime-fuzz-reviewers
-/crates/fuzzing @bytecodealliance/wasmtime-fuzz-reviewers
+/fuzz/ @bytecodealliance/wasmtime-fuzz-reviewers

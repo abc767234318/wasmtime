@@ -46,9 +46,6 @@ audit-as-crates-io = true
 [policy.cranelift-frontend]
 audit-as-crates-io = true
 
-[policy.cranelift-fuzzgen]
-criteria = []
-
 [policy.cranelift-interpreter]
 audit-as-crates-io = true
 
@@ -77,7 +74,7 @@ audit-as-crates-io = true
 audit-as-crates-io = true
 
 [policy.isle-fuzz]
-criteria = []
+criteria = "safe-to-run"
 
 [policy.wasi-common]
 audit-as-crates-io = true
@@ -116,7 +113,7 @@ audit-as-crates-io = true
 audit-as-crates-io = true
 
 [policy.wasmtime-environ-fuzz]
-criteria = []
+criteria = "safe-to-run"
 
 [policy.wasmtime-explorer]
 audit-as-crates-io = true
@@ -125,10 +122,10 @@ audit-as-crates-io = true
 audit-as-crates-io = true
 
 [policy.wasmtime-fuzz]
-criteria = []
+criteria = "safe-to-run"
 
 [policy.wasmtime-fuzzing]
-criteria = []
+criteria = "safe-to-run"
 
 [policy.wasmtime-jit-debug]
 audit-as-crates-io = true

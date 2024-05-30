@@ -12,7 +12,6 @@ pub use wasmparser;
 #[doc(hidden)]
 pub use alloc::format as __format;
 
-use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use core::{fmt, ops::Range};
 use cranelift_entity::entity_impl;
@@ -223,20 +222,6 @@ impl WasmValType {
             _ => false,
         }
     }
-
-    fn trampoline_type(&self) -> Self {
-        match self {
-            WasmValType::Ref(r) => WasmValType::Ref(WasmRefType {
-                nullable: true,
-                heap_type: r.heap_type.top().into(),
-            }),
-            WasmValType::I32
-            | WasmValType::I64
-            | WasmValType::F32
-            | WasmValType::F64
-            | WasmValType::V128 => self.clone(),
-        }
-    }
 }
 
 /// WebAssembly reference type -- equivalent of `wasmparser`'s RefType
@@ -326,23 +311,8 @@ pub enum EngineOrModuleTypeIndex {
 }
 
 impl From<ModuleInternedTypeIndex> for EngineOrModuleTypeIndex {
-    #[inline]
     fn from(i: ModuleInternedTypeIndex) -> Self {
         Self::Module(i)
-    }
-}
-
-impl From<VMSharedTypeIndex> for EngineOrModuleTypeIndex {
-    #[inline]
-    fn from(i: VMSharedTypeIndex) -> Self {
-        Self::Engine(i)
-    }
-}
-
-impl From<RecGroupRelativeTypeIndex> for EngineOrModuleTypeIndex {
-    #[inline]
-    fn from(i: RecGroupRelativeTypeIndex) -> Self {
-        Self::RecGroup(i)
     }
 }
 
@@ -418,23 +388,16 @@ impl EngineOrModuleTypeIndex {
 /// WebAssembly heap type -- equivalent of `wasmparser`'s HeapType
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WasmHeapType {
-    // External types.
     Extern,
-    NoExtern,
 
-    // Function types.
     Func,
     ConcreteFunc(EngineOrModuleTypeIndex),
     NoFunc,
 
-    // Internal types.
     Any,
-    Eq,
     I31,
     Array,
     ConcreteArray(EngineOrModuleTypeIndex),
-    Struct,
-    ConcreteStruct(EngineOrModuleTypeIndex),
     None,
 }
 
@@ -453,17 +416,13 @@ impl fmt::Display for WasmHeapType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Extern => write!(f, "extern"),
-            Self::NoExtern => write!(f, "noextern"),
             Self::Func => write!(f, "func"),
             Self::ConcreteFunc(i) => write!(f, "func {i}"),
             Self::NoFunc => write!(f, "nofunc"),
             Self::Any => write!(f, "any"),
-            Self::Eq => write!(f, "eq"),
             Self::I31 => write!(f, "i31"),
             Self::Array => write!(f, "array"),
             Self::ConcreteArray(i) => write!(f, "array {i}"),
-            Self::Struct => write!(f, "struct"),
-            Self::ConcreteStruct(i) => write!(f, "struct {i}"),
             Self::None => write!(f, "none"),
         }
     }
@@ -477,7 +436,6 @@ impl TypeTrace for WasmHeapType {
         match *self {
             Self::ConcreteArray(i) => func(i),
             Self::ConcreteFunc(i) => func(i),
-            Self::ConcreteStruct(i) => func(i),
             _ => Ok(()),
         }
     }
@@ -489,7 +447,6 @@ impl TypeTrace for WasmHeapType {
         match self {
             Self::ConcreteArray(i) => func(i),
             Self::ConcreteFunc(i) => func(i),
-            Self::ConcreteStruct(i) => func(i),
             _ => Ok(()),
         }
     }
@@ -523,19 +480,16 @@ impl WasmHeapType {
     #[inline]
     pub fn top(&self) -> WasmHeapTopType {
         match self {
-            WasmHeapType::Extern | WasmHeapType::NoExtern => WasmHeapTopType::Extern,
+            WasmHeapType::Extern => WasmHeapTopType::Extern,
 
             WasmHeapType::Func | WasmHeapType::ConcreteFunc(_) | WasmHeapType::NoFunc => {
                 WasmHeapTopType::Func
             }
 
             WasmHeapType::Any
-            | WasmHeapType::Eq
             | WasmHeapType::I31
             | WasmHeapType::Array
             | WasmHeapType::ConcreteArray(_)
-            | WasmHeapType::Struct
-            | WasmHeapType::ConcreteStruct(_)
             | WasmHeapType::None => WasmHeapTopType::Any,
         }
     }
@@ -631,48 +585,6 @@ impl WasmFuncType {
     pub fn non_i31_gc_ref_returns_count(&self) -> usize {
         self.non_i31_gc_ref_returns_count
     }
-
-    /// Is this function type compatible with trampoline usage in Wasmtime?
-    pub fn is_trampoline_type(&self) -> bool {
-        self.params().iter().all(|p| *p == p.trampoline_type())
-            && self.returns().iter().all(|r| *r == r.trampoline_type())
-    }
-
-    /// Get the version of this function type that is suitable for usage as a
-    /// trampoline in Wasmtime.
-    ///
-    /// If this function is suitable for trampoline usage as-is, then a borrowed
-    /// `Cow` is returned. If it must be tweaked for trampoline usage, then an
-    /// owned `Cow` is returned.
-    ///
-    /// ## What is a trampoline type?
-    ///
-    /// All reference types in parameters and results are mapped to their
-    /// nullable top type, e.g. `(ref $my_struct_type)` becomes `(ref null
-    /// any)`.
-    ///
-    /// This allows us to share trampolines between functions whose signatures
-    /// both map to the same trampoline type. It also allows the host to satisfy
-    /// a Wasm module's function import of type `S` with a function of type `T`
-    /// where `T <: S`, even when the Wasm module never defines the type `T`
-    /// (and might never even be able to!)
-    ///
-    /// The flip side is that this adds a constraint to our trampolines: they
-    /// can only pass references around (e.g. move a reference from one calling
-    /// convention's location to another's) and may not actually inspect the
-    /// references themselves (unless the trampolines start doing explicit,
-    /// fallible downcasts, but if we ever need that, then we might want to
-    /// redesign this stuff).
-    pub fn trampoline_type(&self) -> Cow<'_, Self> {
-        if self.is_trampoline_type() {
-            return Cow::Borrowed(self);
-        }
-
-        Cow::Owned(Self::new(
-            self.params().iter().map(|p| p.trampoline_type()).collect(),
-            self.returns().iter().map(|r| r.trampoline_type()).collect(),
-        ))
-    }
 }
 
 /// Represents storage types introduced in the GC spec for array and struct fields.
@@ -764,61 +676,16 @@ impl TypeTrace for WasmArrayType {
     }
 }
 
-/// A concrete struct type.
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
-pub struct WasmStructType {
-    pub fields: Box<[WasmFieldType]>,
-}
-
-impl TypeTrace for WasmStructType {
-    fn trace<F, E>(&self, func: &mut F) -> Result<(), E>
-    where
-        F: FnMut(EngineOrModuleTypeIndex) -> Result<(), E>,
-    {
-        for f in self.fields.iter() {
-            f.trace(func)?;
-        }
-        Ok(())
-    }
-
-    fn trace_mut<F, E>(&mut self, func: &mut F) -> Result<(), E>
-    where
-        F: FnMut(&mut EngineOrModuleTypeIndex) -> Result<(), E>,
-    {
-        for f in self.fields.iter_mut() {
-            f.trace_mut(func)?;
-        }
-        Ok(())
-    }
-}
-
 /// A function, array, or struct type.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum WasmCompositeType {
     Array(WasmArrayType),
     Func(WasmFuncType),
-    Struct(WasmStructType),
+    //
+    // TODO: struct types.
 }
 
 impl WasmCompositeType {
-    #[inline]
-    pub fn is_array(&self) -> bool {
-        matches!(self, Self::Array(_))
-    }
-
-    #[inline]
-    pub fn as_array(&self) -> Option<&WasmArrayType> {
-        match self {
-            WasmCompositeType::Array(f) => Some(f),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn unwrap_array(&self) -> &WasmArrayType {
-        self.as_array().unwrap()
-    }
-
     #[inline]
     pub fn is_func(&self) -> bool {
         matches!(self, Self::Func(_))
@@ -838,21 +705,21 @@ impl WasmCompositeType {
     }
 
     #[inline]
-    pub fn is_struct(&self) -> bool {
-        matches!(self, Self::Struct(_))
+    pub fn is_array(&self) -> bool {
+        matches!(self, Self::Array(_))
     }
 
     #[inline]
-    pub fn as_struct(&self) -> Option<&WasmStructType> {
+    pub fn as_array(&self) -> Option<&WasmArrayType> {
         match self {
-            WasmCompositeType::Struct(f) => Some(f),
+            WasmCompositeType::Array(f) => Some(f),
             _ => None,
         }
     }
 
     #[inline]
-    pub fn unwrap_struct(&self) -> &WasmStructType {
-        self.as_struct().unwrap()
+    pub fn unwrap_array(&self) -> &WasmArrayType {
+        self.as_array().unwrap()
     }
 }
 
@@ -864,7 +731,6 @@ impl TypeTrace for WasmCompositeType {
         match self {
             WasmCompositeType::Array(a) => a.trace(func),
             WasmCompositeType::Func(f) => f.trace(func),
-            WasmCompositeType::Struct(a) => a.trace(func),
         }
     }
 
@@ -875,7 +741,6 @@ impl TypeTrace for WasmCompositeType {
         match self {
             WasmCompositeType::Array(a) => a.trace_mut(func),
             WasmCompositeType::Func(f) => f.trace_mut(func),
-            WasmCompositeType::Struct(a) => a.trace_mut(func),
         }
     }
 }
@@ -883,13 +748,8 @@ impl TypeTrace for WasmCompositeType {
 /// A concrete, user-defined (or host-defined) Wasm type.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct WasmSubType {
-    /// Whether this type is forbidden from being the supertype of any other
-    /// type.
-    pub is_final: bool,
-
-    /// This type's supertype, if any.
-    pub supertype: Option<EngineOrModuleTypeIndex>,
-
+    // TODO: is_final, supertype
+    //
     /// The array, function, or struct that is defined.
     pub composite_type: WasmCompositeType,
 }
@@ -924,21 +784,6 @@ impl WasmSubType {
     pub fn unwrap_array(&self) -> &WasmArrayType {
         self.composite_type.unwrap_array()
     }
-
-    #[inline]
-    pub fn is_struct(&self) -> bool {
-        self.composite_type.is_struct()
-    }
-
-    #[inline]
-    pub fn as_struct(&self) -> Option<&WasmStructType> {
-        self.composite_type.as_struct()
-    }
-
-    #[inline]
-    pub fn unwrap_struct(&self) -> &WasmStructType {
-        self.composite_type.unwrap_struct()
-    }
 }
 
 impl TypeTrace for WasmSubType {
@@ -946,9 +791,6 @@ impl TypeTrace for WasmSubType {
     where
         F: FnMut(EngineOrModuleTypeIndex) -> Result<(), E>,
     {
-        if let Some(sup) = self.supertype {
-            func(sup)?;
-        }
         self.composite_type.trace(func)
     }
 
@@ -956,9 +798,6 @@ impl TypeTrace for WasmSubType {
     where
         F: FnMut(&mut EngineOrModuleTypeIndex) -> Result<(), E>,
     {
-        if let Some(sup) = self.supertype.as_mut() {
-            func(sup)?;
-        }
         self.composite_type.trace_mut(func)
     }
 }
@@ -1489,87 +1328,6 @@ pub struct Memory {
     pub memory64: bool,
 }
 
-/// WebAssembly page sizes are defined to be 64KiB.
-pub const WASM_PAGE_SIZE: u32 = 0x10000;
-
-/// Maximum size, in bytes, of 32-bit memories (4G)
-pub const WASM32_MAX_SIZE: u64 = 1 << 32;
-
-/// Maximum size, in bytes, of 64-bit memories.
-///
-/// Note that the true maximum size of a 64-bit linear memory, in bytes, cannot
-/// be represented in a `u64`. That would require a u65 to store `1<<64`.
-/// Despite that no system can actually allocate a full 64-bit linear memory so
-/// this is instead emulated as "what if the kernel fit in a single wasm page
-/// of linear memory". Shouldn't ever actually be possible but it provides a
-/// number to serve as an effective maximum.
-pub const WASM64_MAX_SIZE: u64 = 0u64.wrapping_sub(0x10000);
-
-impl Memory {
-    /// Returns the minimum size, in bytes, that this memory must be.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the calculation of the minimum size overflows the
-    /// `u64` return type. This means that the memory can't be allocated but
-    /// it's deferred to the caller to how to deal with that.
-    pub fn minimum_byte_size(&self) -> Result<u64, SizeOverflow> {
-        self.minimum
-            .checked_mul(u64::from(WASM_PAGE_SIZE))
-            .ok_or(SizeOverflow)
-    }
-
-    /// Returns the maximum size, in bytes, that this memory is allowed to be.
-    ///
-    /// Note that the return value here is not an `Option` despite the maximum
-    /// size of a linear memory being optional in wasm. If a maximum size
-    /// is not present in the memory's type then a maximum size is selected for
-    /// it. For example the maximum size of a 32-bit memory is `1<<32`. The
-    /// maximum size of a 64-bit linear memory is chosen to be a value that
-    /// won't ever be allowed at runtime.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the calculation of the maximum size overflows the
-    /// `u64` return type. This means that the memory can't be allocated but
-    /// it's deferred to the caller to how to deal with that.
-    pub fn maximum_byte_size(&self) -> Result<u64, SizeOverflow> {
-        match self.maximum {
-            Some(max) => max
-                .checked_mul(u64::from(WASM_PAGE_SIZE))
-                .ok_or(SizeOverflow),
-            None => {
-                let min = self.minimum_byte_size()?;
-                Ok(min.max(self.max_size_based_on_index_type()))
-            }
-        }
-    }
-
-    /// Returns the maximum size memory is allowed to be only based on the
-    /// index type used by this memory.
-    ///
-    /// For example 32-bit linear memories return `1<<32` from this method.
-    pub fn max_size_based_on_index_type(&self) -> u64 {
-        if self.memory64 {
-            WASM64_MAX_SIZE
-        } else {
-            WASM32_MAX_SIZE
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct SizeOverflow;
-
-impl fmt::Display for SizeOverflow {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("size overflow calculating memory size")
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for SizeOverflow {}
-
 impl From<wasmparser::MemoryType> for Memory {
     fn from(ty: wasmparser::MemoryType) -> Memory {
         Memory {
@@ -1609,46 +1367,34 @@ pub trait TypeConvert {
     }
 
     /// Converts a wasmparser table type into a wasmtime type
-    fn convert_table_type(&self, ty: &wasmparser::TableType) -> WasmResult<Table> {
-        if ty.table64 {
-            return Err(wasm_unsupported!("wasm memory64: 64-bit table type"));
-        }
-        Ok(Table {
+    fn convert_table_type(&self, ty: &wasmparser::TableType) -> Table {
+        Table {
             wasm_ty: self.convert_ref_type(ty.element_type),
-            minimum: ty.initial.try_into().unwrap(),
-            maximum: ty.maximum.map(|i| i.try_into().unwrap()),
-        })
-    }
-
-    fn convert_sub_type(&self, ty: &wasmparser::SubType) -> WasmSubType {
-        WasmSubType {
-            is_final: ty.is_final,
-            supertype: ty.supertype_idx.map(|i| self.lookup_type_index(i.unpack())),
-            composite_type: self.convert_composite_type(&ty.composite_type),
+            minimum: ty.initial,
+            maximum: ty.maximum,
         }
     }
 
-    fn convert_composite_type(&self, ty: &wasmparser::CompositeType) -> WasmCompositeType {
+    fn convert_sub_type(&self, ty: &wasmparser::SubType) -> WasmResult<WasmSubType> {
+        if ty.supertype_idx.is_some() {
+            return Err(wasm_unsupported!("wasm gc: explicit subtyping"));
+        }
+        let composite_type = self.convert_composite_type(&ty.composite_type)?;
+        Ok(WasmSubType { composite_type })
+    }
+
+    fn convert_composite_type(
+        &self,
+        ty: &wasmparser::CompositeType,
+    ) -> WasmResult<WasmCompositeType> {
         match ty {
             wasmparser::CompositeType::Func(f) => {
-                WasmCompositeType::Func(self.convert_func_type(f))
+                Ok(WasmCompositeType::Func(self.convert_func_type(f)))
             }
             wasmparser::CompositeType::Array(a) => {
-                WasmCompositeType::Array(self.convert_array_type(a))
+                Ok(WasmCompositeType::Array(self.convert_array_type(a)))
             }
-            wasmparser::CompositeType::Struct(s) => {
-                WasmCompositeType::Struct(self.convert_struct_type(s))
-            }
-        }
-    }
-
-    fn convert_struct_type(&self, ty: &wasmparser::StructType) -> WasmStructType {
-        WasmStructType {
-            fields: ty
-                .fields
-                .iter()
-                .map(|f| self.convert_field_type(f))
-                .collect(),
+            wasmparser::CompositeType::Struct(_) => Err(wasm_unsupported!("wasm gc: struct types")),
         }
     }
 
@@ -1710,18 +1456,19 @@ pub trait TypeConvert {
     fn convert_heap_type(&self, ty: wasmparser::HeapType) -> WasmHeapType {
         match ty {
             wasmparser::HeapType::Extern => WasmHeapType::Extern,
-            wasmparser::HeapType::NoExtern => WasmHeapType::NoExtern,
             wasmparser::HeapType::Func => WasmHeapType::Func,
             wasmparser::HeapType::NoFunc => WasmHeapType::NoFunc,
             wasmparser::HeapType::Concrete(i) => self.lookup_heap_type(i),
             wasmparser::HeapType::Any => WasmHeapType::Any,
-            wasmparser::HeapType::Eq => WasmHeapType::Eq,
             wasmparser::HeapType::I31 => WasmHeapType::I31,
             wasmparser::HeapType::Array => WasmHeapType::Array,
-            wasmparser::HeapType::Struct => WasmHeapType::Struct,
             wasmparser::HeapType::None => WasmHeapType::None,
 
-            wasmparser::HeapType::Exn | wasmparser::HeapType::NoExn => {
+            wasmparser::HeapType::Exn
+            | wasmparser::HeapType::NoExn
+            | wasmparser::HeapType::NoExtern
+            | wasmparser::HeapType::Eq
+            | wasmparser::HeapType::Struct => {
                 unimplemented!("unsupported heap type {ty:?}");
             }
         }
@@ -1730,8 +1477,4 @@ pub trait TypeConvert {
     /// Converts the specified type index from a heap type into a canonicalized
     /// heap type.
     fn lookup_heap_type(&self, index: wasmparser::UnpackedIndex) -> WasmHeapType;
-
-    /// Converts the specified type index from a heap type into a canonicalized
-    /// heap type.
-    fn lookup_type_index(&self, index: wasmparser::UnpackedIndex) -> EngineOrModuleTypeIndex;
 }

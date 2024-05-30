@@ -1375,13 +1375,12 @@ where
         // This code assumes that [`Self::emit_lazy_init_funcref`] will
         // push the funcref to the value stack.
         match self.env.translation.module.table_plans[table_index].style {
-            TableStyle::CallerChecksSignature { lazy_init: true } => {
+            TableStyle::CallerChecksSignature => {
                 let funcref_ptr = self.context.stack.peek().map(|v| v.unwrap_reg()).unwrap();
                 self.masm
                     .trapz(funcref_ptr.into(), TrapCode::IndirectCallToNull);
                 self.emit_typecheck_funcref(funcref_ptr.into(), type_index);
             }
-            _ => unimplemented!("Support for eager table init"),
         }
 
         let callee = self.env.funcref(type_index);
@@ -1429,10 +1428,7 @@ where
 
         match heap_type {
             WasmHeapType::Func => match style {
-                TableStyle::CallerChecksSignature { lazy_init: true } => {
-                    self.emit_lazy_init_funcref(table_index)
-                }
-                _ => unimplemented!("Support for eager table init"),
+                TableStyle::CallerChecksSignature => self.emit_lazy_init_funcref(table_index),
             },
             t => unimplemented!("Support for WasmHeapType: {t}"),
         }
@@ -1505,7 +1501,7 @@ where
         let plan = self.env.table_plan(table_index);
         match plan.table.wasm_ty.heap_type {
             WasmHeapType::Func => match plan.style {
-                TableStyle::CallerChecksSignature { lazy_init: true } => {
+                TableStyle::CallerChecksSignature => {
                     let value = self.context.pop_to_reg(self.masm, None);
                     let index = self.context.pop_to_reg(self.masm, None);
                     let base = self.context.any_gpr(self.masm);
@@ -1525,7 +1521,6 @@ where
                     self.context.free_reg(index);
                     self.context.free_reg(base);
                 }
-                _ => unimplemented!("Support for eager table init"),
             },
             ty => unimplemented!("Support for WasmHeapType: {ty}"),
         };
@@ -1715,9 +1710,9 @@ where
                 &mut self.context,
                 self.masm,
                 |results, context, masm| {
-                    // In the case of `br_if` there's a possibility that we'll
-                    // exit early from the block or fallthrough, for
-                    // a fallthrough, we cannot rely on the pre-computed return area;
+                    // In the case of `br_if` theres a possibility that we'll
+                    // exit early from the block or falltrough, for
+                    // a falltrough, we cannot rely on the pre-computed return area;
                     // it must be recalculated so that any values that are
                     // generated are correctly placed near the current stack
                     // pointer.
@@ -1891,7 +1886,7 @@ where
         let val1 = self.context.pop_to_reg(self.masm, None);
         self.masm
             .cmp(cond.reg.into(), RegImm::i32(0), OperandSize::S32);
-        // Conditionally move val1 to val2 if the comparison is
+        // Conditionally move val1 to val2 if the the comparision is
         // not zero.
         self.masm
             .cmov(val1.into(), val2.into(), IntCmpKind::Ne, val1.ty.into());
@@ -2135,7 +2130,7 @@ impl From<WasmValType> for OperandSize {
             WasmValType::I64 | WasmValType::F64 => OperandSize::S64,
             WasmValType::Ref(rt) => {
                 match rt.heap_type {
-                    // TODO: Hardcoded size, assuming 64-bit support only. Once
+                    // TODO: Harcoded size, assuming 64-bit support only. Once
                     // Wasmtime supports 32-bit architectures, this will need
                     // to be updated in such a way that the calculation of the
                     // OperandSize will depend on the target's  pointer size.

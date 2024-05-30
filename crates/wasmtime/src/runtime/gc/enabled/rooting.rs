@@ -102,20 +102,16 @@
 //! can. However, if you really must, consider also using an `AutoAssertNoGc`
 //! across the block of code that is manipulating raw GC references.
 
-use crate::prelude::*;
 use crate::runtime::vm::{GcRootsList, GcStore, VMGcRef};
 use crate::{
     store::{AutoAssertNoGc, StoreId, StoreOpaque},
     AsContext, AsContextMut, GcRef, Result, RootedGcRef,
 };
 use anyhow::anyhow;
-use core::any;
-use core::marker;
-use core::mem;
-use core::num::NonZeroU64;
-use core::{
-    fmt::{self, Debug},
-    hash::{Hash, Hasher},
+use std::num::NonZeroU64;
+use std::{
+    fmt::Debug,
+    hash::Hash,
     ops::{Deref, DerefMut},
 };
 use wasmtime_slab::{Id as SlabId, Slab};
@@ -200,8 +196,8 @@ pub struct GcRootIndex {
 
 const _: () = {
     // NB: these match the C API which should also be updated if this changes
-    assert!(mem::size_of::<GcRootIndex>() == 16);
-    assert!(mem::align_of::<GcRootIndex>() == 8);
+    assert!(std::mem::size_of::<GcRootIndex>() == 16);
+    assert!(std::mem::align_of::<GcRootIndex>() == 8);
 };
 
 impl GcRootIndex {
@@ -287,7 +283,7 @@ impl GcRootIndex {
 struct PackedIndex(u32);
 
 impl Debug for PackedIndex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(index) = self.as_lifo() {
             f.debug_tuple("PackedIndex::Lifo").field(&index).finish()
         } else if let Some(id) = self.as_manual() {
@@ -440,7 +436,7 @@ impl RootSet {
         //
         //     self.lifo_roots.truncate(scope);
 
-        let mut lifo_roots = mem::take(&mut self.lifo_roots);
+        let mut lifo_roots = std::mem::take(&mut self.lifo_roots);
         for root in lifo_roots.drain(scope..) {
             gc_store.drop_gc_ref(root.gc_ref);
         }
@@ -664,14 +660,14 @@ impl RootSet {
 #[repr(transparent)]
 pub struct Rooted<T: GcRef> {
     inner: GcRootIndex,
-    _phantom: marker::PhantomData<T>,
+    _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T: GcRef> Clone for Rooted<T> {
     fn clone(&self) -> Self {
         Rooted {
             inner: self.inner,
-            _phantom: marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 }
@@ -679,8 +675,8 @@ impl<T: GcRef> Clone for Rooted<T> {
 impl<T: GcRef> Copy for Rooted<T> {}
 
 impl<T: GcRef> Debug for Rooted<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = format!("Rooted<{}>", any::type_name::<T>());
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = format!("Rooted<{}>", std::any::type_name::<T>());
         f.debug_struct(&name).field("inner", &self.inner).finish()
     }
 }
@@ -725,7 +721,7 @@ impl<T: GcRef> Rooted<T> {
         let inner = roots.push_lifo_root(id, gc_ref);
         Rooted {
             inner,
-            _phantom: marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -903,7 +899,7 @@ impl<T: GcRef> Rooted<T> {
     /// [`ref_hash`][crate::Rooted::ref_hash] method instead.
     pub fn rooted_hash<H>(&self, state: &mut H)
     where
-        H: Hasher,
+        H: std::hash::Hasher,
     {
         self.inner.hash(state);
     }
@@ -917,7 +913,7 @@ impl<T: GcRef> Rooted<T> {
     /// [`rooted_hash`][crate::Rooted::rooted_hash] method instead.
     pub fn ref_hash<H>(&self, store: impl AsContext, state: &mut H) -> Result<()>
     where
-        H: Hasher,
+        H: std::hash::Hasher,
     {
         let gc_ref = self.try_gc_ref(store.as_context().0)?;
         gc_ref.hash(state);
@@ -1211,22 +1207,22 @@ where
     T: GcRef,
 {
     inner: GcRootIndex,
-    _phantom: marker::PhantomData<T>,
+    _phantom: std::marker::PhantomData<T>,
 }
 
 const _: () = {
     use crate::{AnyRef, ExternRef};
 
     // NB: these match the C API which should also be updated if this changes
-    assert!(mem::size_of::<ManuallyRooted<AnyRef>>() == 16);
-    assert!(mem::align_of::<ManuallyRooted<AnyRef>>() == 8);
-    assert!(mem::size_of::<ManuallyRooted<ExternRef>>() == 16);
-    assert!(mem::align_of::<ManuallyRooted<ExternRef>>() == 8);
+    assert!(std::mem::size_of::<ManuallyRooted<AnyRef>>() == 16);
+    assert!(std::mem::align_of::<ManuallyRooted<AnyRef>>() == 8);
+    assert!(std::mem::size_of::<ManuallyRooted<ExternRef>>() == 16);
+    assert!(std::mem::align_of::<ManuallyRooted<ExternRef>>() == 8);
 };
 
 impl<T: GcRef> Debug for ManuallyRooted<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = format!("ManuallyRooted<{}>", any::type_name::<T>());
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = format!("ManuallyRooted<{}>", std::any::type_name::<T>());
         f.debug_struct(&name).field("inner", &self.inner).finish()
     }
 }
@@ -1260,7 +1256,7 @@ where
                 generation: 0,
                 index: PackedIndex::new_manual(id),
             },
-            _phantom: marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -1516,7 +1512,7 @@ where
     /// [`ref_hash`][crate::ManuallyRooted::ref_hash] method instead.
     pub fn rooted_hash<H>(&self, state: &mut H)
     where
-        H: Hasher,
+        H: std::hash::Hasher,
     {
         self.inner.hash(state);
     }
@@ -1530,7 +1526,7 @@ where
     /// [`rooted_hash`][crate::Rooted::rooted_hash] method instead.
     pub fn ref_hash<H>(&self, store: impl AsContext, state: &mut H)
     where
-        H: Hasher,
+        H: std::hash::Hasher,
     {
         let gc_ref = self
             .get_gc_ref(store.as_context().0)
@@ -1555,7 +1551,7 @@ where
                 generation: b,
                 index: PackedIndex(c),
             },
-            _phantom: marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 }

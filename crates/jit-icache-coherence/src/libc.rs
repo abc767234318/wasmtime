@@ -108,7 +108,6 @@ fn riscv_flush_icache(start: u64, end: u64) -> Result<()> {
     cfg_if::cfg_if! {
         if #[cfg(feature = "one-core")] {
             use core::arch::asm;
-            let _ = (start, end);
             unsafe {
                 asm!("fence.i");
             };

@@ -398,7 +398,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
         }
 
         // Find the sret register, if it's used.
-        let mut sret_param = None;
+        let mut sret_reg = None;
         for ret in vcode.abi().signature().returns.iter() {
             if ret.purpose == ArgumentPurpose::StructReturn {
                 let entry_bb = f.stencil.layout.entry_block().unwrap();
@@ -409,20 +409,17 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
                     .zip(vcode.abi().signature().params.iter())
                 {
                     if sig_param.purpose == ArgumentPurpose::StructReturn {
-                        assert!(sret_param.is_none());
-                        sret_param = Some(param);
+                        let regs = value_regs[param];
+                        assert!(regs.len() == 1);
+
+                        assert!(sret_reg.is_none());
+                        sret_reg = Some(regs);
                     }
                 }
 
-                assert!(sret_param.is_some());
+                assert!(sret_reg.is_some());
             }
         }
-
-        let sret_reg = sret_param.map(|param| {
-            let regs = value_regs[param];
-            assert!(regs.len() == 1);
-            regs
-        });
 
         // Compute instruction colors, find constant instructions, and find instructions with
         // side-effects, in one combined pass.
@@ -452,7 +449,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
             block_end_colors[bb] = InstColor::new(cur_color);
         }
 
-        let value_ir_uses = Self::compute_use_states(f, sret_param);
+        let value_ir_uses = Self::compute_use_states(f);
 
         Ok(Lower {
             f,
@@ -485,10 +482,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
     /// Pre-analysis: compute `value_ir_uses`. See comment on
     /// `ValueUseState` for a description of what this analysis
     /// computes.
-    fn compute_use_states<'a>(
-        f: &'a Function,
-        sret_param: Option<Value>,
-    ) -> SecondaryMap<Value, ValueUseState> {
+    fn compute_use_states<'a>(f: &'a Function) -> SecondaryMap<Value, ValueUseState> {
         // We perform the analysis without recursion, so we don't
         // overflow the stack on long chains of ops in the input.
         //
@@ -507,12 +501,6 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
         // efficient than a full indirect-use-counting pass.
 
         let mut value_ir_uses = SecondaryMap::with_default(ValueUseState::Unused);
-
-        if let Some(sret_param) = sret_param {
-            // There's an implicit use of the struct-return parameter in each
-            // copy of the function epilogue, which we count here.
-            value_ir_uses[sret_param] = ValueUseState::Multiple;
-        }
 
         // Stack of iterators over Values as we do DFS to mark
         // Multiple-state subtrees. The iterator type is whatever is
@@ -544,7 +532,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
             // Iterate over all values used by all instructions, noting an
             // additional use on each operand.
             for arg in f.dfg.inst_values(inst) {
-                debug_assert!(f.dfg.value_is_real(arg));
+                let arg = f.dfg.resolve_aliases(arg);
                 let old = value_ir_uses[arg];
                 if force_multiple {
                     trace!(
@@ -567,7 +555,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
                 }
                 while let Some(iter) = stack.last_mut() {
                     if let Some(value) = iter.next() {
-                        debug_assert!(f.dfg.value_is_real(value));
+                        let value = f.dfg.resolve_aliases(value);
                         trace!(" -> DFS reaches {}", value);
                         if value_ir_uses[value] == ValueUseState::Multiple {
                             // Truncate DFS here: no need to go further,
@@ -575,7 +563,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
                             // With debug asserts, check one level of
                             // that invariant at least.
                             debug_assert!(uses(value).into_iter().flatten().all(|arg| {
-                                debug_assert!(f.dfg.value_is_real(arg));
+                                let arg = f.dfg.resolve_aliases(arg);
                                 value_ir_uses[arg] == ValueUseState::Multiple
                             }));
                             continue;
@@ -847,12 +835,13 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
 
     fn get_value_labels<'a>(&'a self, val: Value, depth: usize) -> Option<&'a [ValueLabelStart]> {
         if let Some(ref values_labels) = self.f.dfg.values_labels {
-            debug_assert!(self.f.dfg.value_is_real(val));
             trace!(
-                "get_value_labels: val {} -> {:?}",
+                "get_value_labels: val {} -> {} -> {:?}",
                 val,
-                values_labels.get(&val)
+                self.f.dfg.resolve_aliases(val),
+                values_labels.get(&self.f.dfg.resolve_aliases(val))
             );
+            let val = self.f.dfg.resolve_aliases(val);
             match values_labels.get(&val) {
                 Some(&ValueLabelAssignments::Starts(ref list)) => Some(&list[..]),
                 Some(&ValueLabelAssignments::Alias { value, .. }) if depth < 10 => {
@@ -982,7 +971,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
 
             let mut branch_arg_vregs: SmallVec<[Reg; 16]> = smallvec![];
             for &arg in branch_args {
-                debug_assert!(self.f.dfg.value_is_real(arg));
+                let arg = self.f.dfg.resolve_aliases(arg);
                 let regs = self.put_value_in_regs(arg);
                 branch_arg_vregs.extend_from_slice(regs.regs());
             }
@@ -1233,8 +1222,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
     /// not be codegen'd (it has been integrated into the current instruction).
     pub fn input_as_value(&self, ir_inst: Inst, idx: usize) -> Value {
         let val = self.f.dfg.inst_args(ir_inst)[idx];
-        debug_assert!(self.f.dfg.value_is_real(val));
-        val
+        self.f.dfg.resolve_aliases(val)
     }
 
     /// Like `get_input_as_source_or_const` but with a `Value`.
@@ -1334,7 +1322,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
 
     /// Put the given value into register(s) and return the assigned register.
     pub fn put_value_in_regs(&mut self, val: Value) -> ValueRegs<Reg> {
-        debug_assert!(self.f.dfg.value_is_real(val));
+        let val = self.f.dfg.resolve_aliases(val);
         trace!("put_value_in_regs: val {}", val);
 
         if let Some(inst) = self.f.dfg.value_def(val).inst() {

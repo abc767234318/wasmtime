@@ -1,6 +1,5 @@
 //! Index/slot allocator policies for the pooling allocator.
 
-use crate::prelude::*;
 use crate::runtime::vm::CompiledModuleId;
 use std::collections::hash_map::{Entry, HashMap};
 use std::mem;
@@ -31,7 +30,6 @@ impl SimpleIndexAllocator {
         SimpleIndexAllocator(ModuleAffinityIndexAllocator::new(capacity, 0))
     }
 
-    #[allow(unused)] // some cfgs don't use this
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -176,7 +174,6 @@ impl ModuleAffinityIndexAllocator {
     }
 
     /// Are zero slots in use right now?
-    #[allow(unused)] // some cfgs don't use this
     pub fn is_empty(&self) -> bool {
         let inner = self.0.lock().unwrap();
         !inner

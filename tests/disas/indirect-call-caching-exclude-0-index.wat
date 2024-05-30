@@ -1,5 +1,5 @@
 ;;! target = "x86_64"
-;;! flags = [ "-Ocache-call-indirects=y" ]
+;;! flags = [ "-Wcache-call-indirects=y" ]
 
 ;; This test checks that we do *not* get the indirect-call caching optimization
 ;; when it must not be used: in this case, because there is a non-null element
@@ -18,7 +18,7 @@
   call_indirect (result i32))
 
  (elem (i32.const 0) func $f1 $f2 $f3))
-;; function u0:0(i64 vmctx, i64) -> i32 tail {
+;; function u0:0(i64 vmctx, i64) -> i32 fast {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1
@@ -32,7 +32,7 @@
 ;; @0041                               return v2
 ;; }
 ;;
-;; function u0:1(i64 vmctx, i64) -> i32 tail {
+;; function u0:1(i64 vmctx, i64) -> i32 fast {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1
@@ -46,7 +46,7 @@
 ;; @0046                               return v2
 ;; }
 ;;
-;; function u0:2(i64 vmctx, i64) -> i32 tail {
+;; function u0:2(i64 vmctx, i64) -> i32 fast {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1
@@ -60,13 +60,13 @@
 ;; @004b                               return v2
 ;; }
 ;;
-;; function u0:3(i64 vmctx, i64, i32) -> i32 tail {
+;; function u0:3(i64 vmctx, i64, i32) -> i32 fast {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1
 ;;     gv3 = vmctx
 ;;     gv4 = load.i64 notrap aligned readonly gv3+88
-;;     sig0 = (i64 vmctx, i64) -> i32 tail
+;;     sig0 = (i64 vmctx, i64) -> i32 fast
 ;;     sig1 = (i64 vmctx, i32 uext, i32 uext) -> i64 system_v
 ;;     fn0 = colocated u1:9 sig1
 ;;     stack_limit = gv2
@@ -94,11 +94,11 @@
 ;; @0050                               v18 = global_value.i64 gv3
 ;; @0050                               v19 = load.i64 notrap aligned readonly v18+80
 ;; @0050                               v20 = load.i32 notrap aligned readonly v19
-;; @0050                               v21 = load.i32 icall_null aligned readonly v14+16
+;; @0050                               v21 = load.i32 icall_null aligned readonly v14+24
 ;; @0050                               v22 = icmp eq v21, v20
 ;; @0050                               trapz v22, bad_sig
-;; @0050                               v23 = load.i64 notrap aligned readonly v14+8
-;; @0050                               v24 = load.i64 notrap aligned readonly v14+24
+;; @0050                               v23 = load.i64 notrap aligned readonly v14+16
+;; @0050                               v24 = load.i64 notrap aligned readonly v14+32
 ;; @0050                               v25 = call_indirect sig0, v23(v24, v0)
 ;; @0053                               jump block1(v25)
 ;;

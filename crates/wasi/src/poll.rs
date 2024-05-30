@@ -117,7 +117,7 @@ where
 }
 
 #[async_trait::async_trait]
-impl poll::Host for dyn WasiView + '_ {
+impl<T: WasiView> poll::Host for T {
     async fn poll(&mut self, pollables: Vec<Resource<Pollable>>) -> Result<Vec<u32>> {
         type ReadylistIndex = u32;
 
@@ -176,7 +176,7 @@ impl poll::Host for dyn WasiView + '_ {
 }
 
 #[async_trait::async_trait]
-impl crate::bindings::io::poll::HostPollable for dyn WasiView + '_ {
+impl<T: WasiView> crate::bindings::io::poll::HostPollable for T {
     async fn block(&mut self, pollable: Resource<Pollable>) -> Result<()> {
         let table = self.table();
         let pollable = table.get(&pollable)?;
@@ -213,13 +213,13 @@ pub mod sync {
     use anyhow::Result;
     use wasmtime::component::Resource;
 
-    impl poll::Host for dyn WasiView + '_ {
+    impl<T: WasiView> poll::Host for T {
         fn poll(&mut self, pollables: Vec<Resource<Pollable>>) -> Result<Vec<u32>> {
             in_tokio(async { async_poll::Host::poll(self, pollables).await })
         }
     }
 
-    impl crate::bindings::sync::io::poll::HostPollable for dyn WasiView + '_ {
+    impl<T: WasiView> crate::bindings::sync::io::poll::HostPollable for T {
         fn ready(&mut self, pollable: Resource<Pollable>) -> Result<bool> {
             in_tokio(async { async_poll::HostPollable::ready(self, pollable).await })
         }

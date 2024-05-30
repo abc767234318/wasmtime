@@ -1,6 +1,6 @@
 //! S390x ISA definitions: immediate constants.
 
-use crate::machinst::PrettyPrint;
+use crate::machinst::{AllocationConsumer, PrettyPrint};
 use std::string::String;
 
 /// An unsigned 12-bit immediate.
@@ -178,25 +178,25 @@ impl UImm32Shifted {
 }
 
 impl PrettyPrint for UImm12 {
-    fn pretty_print(&self, _: u8) -> String {
+    fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
         format!("{}", self.value)
     }
 }
 
 impl PrettyPrint for SImm20 {
-    fn pretty_print(&self, _: u8) -> String {
+    fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
         format!("{}", self.value)
     }
 }
 
 impl PrettyPrint for UImm16Shifted {
-    fn pretty_print(&self, _: u8) -> String {
+    fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
         format!("{}", self.bits)
     }
 }
 
 impl PrettyPrint for UImm32Shifted {
-    fn pretty_print(&self, _: u8) -> String {
+    fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
         format!("{}", self.bits)
     }
 }

@@ -27,7 +27,6 @@ fn main() {
     let start_time = Instant::now();
 
     let out_dir = env::var("OUT_DIR").expect("The OUT_DIR environment variable must be set");
-    let out_dir = std::path::Path::new(&out_dir);
     let target_triple = env::var("TARGET").expect("The TARGET environment variable must be set");
 
     let all_arch = env::var("CARGO_FEATURE_ALL_ARCH").is_ok();
@@ -61,7 +60,7 @@ fn main() {
     #[cfg(feature = "isle-in-source-tree")]
     let isle_dir = explicit_isle_dir;
     #[cfg(not(feature = "isle-in-source-tree"))]
-    let isle_dir = &out_dir;
+    let isle_dir = std::path::Path::new(&out_dir);
 
     #[cfg(feature = "isle-in-source-tree")]
     {
@@ -81,7 +80,7 @@ fn main() {
         }
     }
 
-    if let Err(err) = meta::generate(&isas, &out_dir, isle_dir) {
+    if let Err(err) = meta::generate(&isas, &out_dir, isle_dir.to_str().unwrap()) {
         eprintln!("Error: {}", err);
         process::exit(1);
     }
@@ -101,7 +100,7 @@ fn main() {
             "cargo:warning=Build step took {:?}.",
             Instant::now() - start_time
         );
-        println!("cargo:warning=Generated files are in {}", out_dir.display());
+        println!("cargo:warning=Generated files are in {}", out_dir);
     }
 
     let pkg_version = env::var("CARGO_PKG_VERSION").unwrap();

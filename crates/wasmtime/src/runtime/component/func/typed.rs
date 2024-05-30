@@ -1,18 +1,17 @@
 use crate::component::func::{Func, LiftContext, LowerContext, Options};
 use crate::component::matching::InstanceType;
 use crate::component::storage::{storage_as_slice, storage_as_slice_mut};
-use crate::prelude::*;
 use crate::runtime::vm::component::ComponentInstance;
 use crate::runtime::vm::SendSyncPtr;
 use crate::{AsContextMut, StoreContext, StoreContextMut, ValRaw};
-use alloc::borrow::Cow;
-use alloc::sync::Arc;
 use anyhow::{anyhow, bail, Context, Result};
-use core::fmt;
-use core::marker;
-use core::mem::{self, MaybeUninit};
-use core::ptr::NonNull;
-use core::str;
+use std::borrow::Cow;
+use std::fmt;
+use std::marker;
+use std::mem::{self, MaybeUninit};
+use std::ptr::NonNull;
+use std::str;
+use std::sync::Arc;
 use wasmtime_environ::component::{
     CanonicalAbiInfo, ComponentTypes, InterfaceType, StringEncoding, VariantInfo, MAX_FLAT_PARAMS,
     MAX_FLAT_RESULTS,
@@ -171,6 +170,7 @@ where
     /// only works with functions defined within an asynchronous store. Also
     /// panics if `store` does not own this function.
     #[cfg(feature = "async")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
     pub async fn call_async<T>(
         &self,
         mut store: impl AsContextMut<Data = T>,
@@ -316,8 +316,8 @@ where
     ) -> Result<Return> {
         assert!(Return::flatten_count() > MAX_FLAT_RESULTS);
         // FIXME: needs to read an i64 for memory64
-        let ptr = usize::try_from(dst.get_u32()).err2anyhow()?;
-        if ptr % usize::try_from(Return::ALIGN32).err2anyhow()? != 0 {
+        let ptr = usize::try_from(dst.get_u32())?;
+        if ptr % usize::try_from(Return::ALIGN32)? != 0 {
             bail!("return pointer not aligned");
         }
 
@@ -336,6 +336,7 @@ where
 
     /// See [`Func::post_return_async`]
     #[cfg(feature = "async")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
     pub async fn post_return_async<T: Send>(
         &self,
         store: impl AsContextMut<Data = T>,
@@ -669,8 +670,8 @@ macro_rules! forward_type_impls {
 forward_type_impls! {
     (T: ComponentType + ?Sized) &'_ T => T,
     (T: ComponentType + ?Sized) Box<T> => T,
-    (T: ComponentType + ?Sized) alloc::rc::Rc<T> => T,
-    (T: ComponentType + ?Sized) alloc::sync::Arc<T> => T,
+    (T: ComponentType + ?Sized) std::rc::Rc<T> => T,
+    (T: ComponentType + ?Sized) std::sync::Arc<T> => T,
     () String => str,
     (T: ComponentType) Vec<T> => [T],
 }
@@ -702,8 +703,8 @@ macro_rules! forward_lowers {
 forward_lowers! {
     (T: Lower + ?Sized) &'_ T => T,
     (T: Lower + ?Sized) Box<T> => T,
-    (T: Lower + ?Sized) alloc::rc::Rc<T> => T,
-    (T: Lower + ?Sized) alloc::sync::Arc<T> => T,
+    (T: Lower + ?Sized) std::rc::Rc<T> => T,
+    (T: Lower + ?Sized) std::sync::Arc<T> => T,
     () String => str,
     (T: Lower) Vec<T> => [T],
 }
@@ -726,8 +727,8 @@ macro_rules! forward_string_lifts {
 
 forward_string_lifts! {
     Box<str>,
-    alloc::rc::Rc<str>,
-    alloc::sync::Arc<str>,
+    std::rc::Rc<str>,
+    std::sync::Arc<str>,
     String,
 }
 
@@ -749,8 +750,8 @@ macro_rules! forward_list_lifts {
 
 forward_list_lifts! {
     Box<[T]>,
-    alloc::rc::Rc<[T]>,
-    alloc::sync::Arc<[T]>,
+    std::rc::Rc<[T]>,
+    std::sync::Arc<[T]>,
     Vec<T>,
 }
 
@@ -1054,7 +1055,7 @@ unsafe impl Lift for char {
     #[inline]
     fn lift(_cx: &mut LiftContext<'_>, ty: InterfaceType, src: &Self::Lower) -> Result<Self> {
         debug_assert!(matches!(ty, InterfaceType::Char));
-        Ok(char::try_from(src.get_u32()).err2anyhow()?)
+        Ok(char::try_from(src.get_u32())?)
     }
 
     #[inline]
@@ -1062,7 +1063,7 @@ unsafe impl Lift for char {
         debug_assert!(matches!(ty, InterfaceType::Char));
         debug_assert!((bytes.as_ptr() as usize) % Self::SIZE32 == 0);
         let bits = u32::from_le_bytes(bytes.try_into().unwrap());
-        Ok(char::try_from(bits).err2anyhow()?)
+        Ok(char::try_from(bits)?)
     }
 }
 
@@ -1338,21 +1339,18 @@ impl WasmStr {
         // Note that bounds-checking already happen in construction of `WasmStr`
         // so this is never expected to panic. This could theoretically be
         // unchecked indexing if we're feeling wild enough.
-        Ok(str::from_utf8(&memory[self.ptr..][..self.len])
-            .err2anyhow()?
-            .into())
+        Ok(str::from_utf8(&memory[self.ptr..][..self.len])?.into())
     }
 
     fn decode_utf16<'a>(&self, memory: &'a [u8], len: usize) -> Result<Cow<'a, str>> {
         // See notes in `decode_utf8` for why this is panicking indexing.
         let memory = &memory[self.ptr..][..len * 2];
-        Ok(core::char::decode_utf16(
+        Ok(std::char::decode_utf16(
             memory
                 .chunks(2)
                 .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap())),
         )
-        .collect::<Result<String, _>>()
-        .err2anyhow()?
+        .collect::<Result<String, _>>()?
         .into())
     }
 
@@ -1386,10 +1384,7 @@ unsafe impl Lift for WasmStr {
         // FIXME: needs memory64 treatment
         let ptr = src[0].get_u32();
         let len = src[1].get_u32();
-        let (ptr, len) = (
-            usize::try_from(ptr).err2anyhow()?,
-            usize::try_from(len).err2anyhow()?,
-        );
+        let (ptr, len) = (usize::try_from(ptr)?, usize::try_from(len)?);
         WasmStr::new(ptr, len, cx)
     }
 
@@ -1400,10 +1395,7 @@ unsafe impl Lift for WasmStr {
         // FIXME: needs memory64 treatment
         let ptr = u32::from_le_bytes(bytes[..4].try_into().unwrap());
         let len = u32::from_le_bytes(bytes[4..].try_into().unwrap());
-        let (ptr, len) = (
-            usize::try_from(ptr).err2anyhow()?,
-            usize::try_from(len).err2anyhow()?,
-        );
+        let (ptr, len) = (usize::try_from(ptr)?, usize::try_from(len)?);
         WasmStr::new(ptr, len, cx)
     }
 }
@@ -1476,7 +1468,7 @@ where
 //
 // Even then though this didn't correctly vectorized for `Vec<u8>`. It's not
 // entirely clear why but it appeared that it's related to reloading the base
-// pointer to memory (I guess from `MemoryMut` itself?). Overall I'm not really
+// pointer fo memory (I guess from `MemoryMut` itself?). Overall I'm not really
 // clear on what's happening there, but this is surely going to be a performance
 // bottleneck in the future.
 fn lower_list<T, U>(
@@ -1540,7 +1532,7 @@ impl<T: Lift> WasmList<T> {
             Some(n) if n <= cx.memory().len() => {}
             _ => bail!("list pointer/length out of bounds of memory"),
         }
-        if ptr % usize::try_from(T::ALIGN32).err2anyhow()? != 0 {
+        if ptr % usize::try_from(T::ALIGN32)? != 0 {
             bail!("list pointer is not aligned")
         }
         Ok(WasmList {
@@ -1696,10 +1688,7 @@ unsafe impl<T: Lift> Lift for WasmList<T> {
         // FIXME: needs memory64 treatment
         let ptr = src[0].get_u32();
         let len = src[1].get_u32();
-        let (ptr, len) = (
-            usize::try_from(ptr).err2anyhow()?,
-            usize::try_from(len).err2anyhow()?,
-        );
+        let (ptr, len) = (usize::try_from(ptr)?, usize::try_from(len)?);
         WasmList::new(ptr, len, cx, elem)
     }
 
@@ -1712,10 +1701,7 @@ unsafe impl<T: Lift> Lift for WasmList<T> {
         // FIXME: needs memory64 treatment
         let ptr = u32::from_le_bytes(bytes[..4].try_into().unwrap());
         let len = u32::from_le_bytes(bytes[4..].try_into().unwrap());
-        let (ptr, len) = (
-            usize::try_from(ptr).err2anyhow()?,
-            usize::try_from(len).err2anyhow()?,
-        );
+        let (ptr, len) = (usize::try_from(ptr)?, usize::try_from(len)?);
         WasmList::new(ptr, len, cx, elem)
     }
 }
@@ -2069,7 +2055,7 @@ where
 ///
 /// * `payload` - the flat storage space for the entire payload of the variant
 /// * `typed_payload` - projection from the payload storage space to the
-///   individual storage space for this variant.
+///   individaul storage space for this variant.
 /// * `lower` - lowering operation used to initialize the `typed_payload` return
 ///   value.
 ///

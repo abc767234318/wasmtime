@@ -21,15 +21,13 @@
 //! other random ELF files, as well as provide better error messages for
 //! using wasmtime artifacts across versions.
 
-use crate::prelude::*;
 use crate::{Engine, ModuleVersionStrategy, Precompiled};
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use core::str::FromStr;
-use object::endian::NativeEndian;
 #[cfg(any(feature = "cranelift", feature = "winch"))]
 use object::write::{Object, StandardSegment};
-use object::{read::elf::ElfFile64, FileFlags, Object as _, ObjectSection, SectionKind};
+use object::{File, FileFlags, Object as _, ObjectSection, SectionKind};
 use serde_derive::{Deserialize, Serialize};
+use std::str::FromStr;
 use wasmtime_environ::obj;
 use wasmtime_environ::{FlagValue, ObjectKind, Tunables};
 
@@ -57,9 +55,7 @@ pub fn check_compatible(engine: &Engine, mmap: &[u8], expected: ObjectKind) -> R
     // structured well enough to make this easy and additionally it's not really
     // a perf issue right now so doing that is left for another day's
     // refactoring.
-    let obj = ElfFile64::<NativeEndian>::parse(mmap)
-        .err2anyhow()
-        .context("failed to parse precompiled artifact as an ELF")?;
+    let obj = File::parse(mmap).context("failed to parse precompiled artifact as an ELF")?;
     let expected_e_flags = match expected {
         ObjectKind::Module => obj::EF_WASMTIME_MODULE,
         ObjectKind::Component => obj::EF_WASMTIME_COMPONENT,
@@ -76,8 +72,7 @@ pub fn check_compatible(engine: &Engine, mmap: &[u8], expected: ObjectKind) -> R
     let data = obj
         .section_by_name(obj::ELF_WASM_ENGINE)
         .ok_or_else(|| anyhow!("failed to find section `{}`", obj::ELF_WASM_ENGINE))?
-        .data()
-        .err2anyhow()?;
+        .data()?;
     let (first, data) = data
         .split_first()
         .ok_or_else(|| anyhow!("invalid engine section"))?;
@@ -96,7 +91,7 @@ pub fn check_compatible(engine: &Engine, mmap: &[u8], expected: ObjectKind) -> R
 
     match &engine.config().module_version {
         ModuleVersionStrategy::WasmtimeVersion => {
-            let version = core::str::from_utf8(version).err2anyhow()?;
+            let version = std::str::from_utf8(version)?;
             if version != env!("CARGO_PKG_VERSION") {
                 bail!(
                     "Module was compiled with incompatible Wasmtime version '{}'",
@@ -105,7 +100,7 @@ pub fn check_compatible(engine: &Engine, mmap: &[u8], expected: ObjectKind) -> R
             }
         }
         ModuleVersionStrategy::Custom(v) => {
-            let version = core::str::from_utf8(&version).err2anyhow()?;
+            let version = std::str::from_utf8(&version)?;
             if version != v {
                 bail!(
                     "Module was compiled with incompatible version '{}'",
@@ -115,9 +110,7 @@ pub fn check_compatible(engine: &Engine, mmap: &[u8], expected: ObjectKind) -> R
         }
         ModuleVersionStrategy::None => { /* ignore the version info, accept all */ }
     }
-    postcard::from_bytes::<Metadata<'_>>(data)
-        .err2anyhow()?
-        .check_compatible(engine)
+    postcard::from_bytes::<Metadata<'_>>(data)?.check_compatible(engine)
 }
 
 #[cfg(any(feature = "cranelift", feature = "winch"))]
@@ -146,7 +139,7 @@ pub fn append_compiler_info(engine: &Engine, obj: &mut Object<'_>, metadata: &Me
 }
 
 fn detect_precompiled<'data, R: object::ReadRef<'data>>(
-    obj: ElfFile64<'data, NativeEndian, R>,
+    obj: File<'data, R>,
 ) -> Option<Precompiled> {
     match obj.flags() {
         FileFlags::Elf {
@@ -164,13 +157,12 @@ fn detect_precompiled<'data, R: object::ReadRef<'data>>(
 }
 
 pub fn detect_precompiled_bytes(bytes: &[u8]) -> Option<Precompiled> {
-    detect_precompiled(ElfFile64::parse(bytes).ok()?)
+    detect_precompiled(File::parse(bytes).ok()?)
 }
 
-#[cfg(feature = "std")]
 pub fn detect_precompiled_file(path: impl AsRef<std::path::Path>) -> Result<Option<Precompiled>> {
     let read_cache = object::ReadCache::new(std::fs::File::open(path)?);
-    let obj = ElfFile64::parse(&read_cache)?;
+    let obj = File::parse(&read_cache)?;
     Ok(detect_precompiled(obj))
 }
 
@@ -319,7 +311,7 @@ impl Metadata<'_> {
         Ok(())
     }
 
-    fn check_int<T: Eq + core::fmt::Display>(found: T, expected: T, feature: &str) -> Result<()> {
+    fn check_int<T: Eq + std::fmt::Display>(found: T, expected: T, feature: &str) -> Result<()> {
         if found == expected {
             return Ok(());
         }
@@ -347,7 +339,7 @@ impl Metadata<'_> {
 
     fn check_tunables(&mut self, other: &Tunables) -> Result<()> {
         let Tunables {
-            static_memory_reservation,
+            static_memory_bound,
             static_memory_offset_guard_size,
             dynamic_memory_offset_guard_size,
             generate_native_debuginfo,
@@ -356,7 +348,6 @@ impl Metadata<'_> {
             epoch_interruption,
             static_memory_bound_is_maximum,
             guard_before_linear_memory,
-            table_lazy_init,
             relaxed_simd_deterministic,
             tail_callable,
             winch_callable,
@@ -377,9 +368,9 @@ impl Metadata<'_> {
         } = self.tunables;
 
         Self::check_int(
-            static_memory_reservation,
-            other.static_memory_reservation,
-            "static memory reservation",
+            static_memory_bound,
+            other.static_memory_bound,
+            "static memory bound",
         )?;
         Self::check_int(
             static_memory_offset_guard_size,
@@ -417,7 +408,6 @@ impl Metadata<'_> {
             other.guard_before_linear_memory,
             "guard before linear memory",
         )?;
-        Self::check_bool(table_lazy_init, other.table_lazy_init, "table lazy init")?;
         Self::check_bool(
             relaxed_simd_deterministic,
             other.relaxed_simd_deterministic,
@@ -643,16 +633,13 @@ Caused by:
 
         match metadata.check_compatible(&engine) {
             Ok(_) => unreachable!(),
-            Err(e) => assert!(
-                format!("{e:?}").starts_with(
-                    "\
+            Err(e) => assert!(format!("{:?}", e).starts_with(
+                "\
 compilation settings of module incompatible with native host
 
 Caused by:
-    don't know how to test for target-specific flag \"not_a_flag\" at runtime",
-                ),
-                "bad error {e:?}",
-            ),
+    cannot test if target-specific flag \"not_a_flag\" is available at runtime",
+            )),
         }
 
         Ok(())

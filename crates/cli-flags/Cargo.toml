@@ -12,7 +12,7 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true, features = ['std'] }
+anyhow = { workspace = true }
 clap = { workspace = true }
 file-per-thread-logger = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }

@@ -13365,7 +13365,8 @@ fn test_s390x_binemit() {
         );
 
         // Check the printed text is as expected.
-        let actual_printing = insn.print_with_state(&mut EmitState::default());
+        let actual_printing =
+            insn.print_with_state(&mut EmitState::default(), &mut AllocationConsumer::new(&[]));
         assert_eq!(expected_printing, actual_printing);
 
         let mut buffer = MachBuffer::new();
@@ -13375,7 +13376,7 @@ fn test_s390x_binemit() {
         buffer.bind_label(label0, ctrl_plane);
 
         // Emit the instruction.
-        insn.emit(&mut buffer, &emit_info, &mut Default::default());
+        insn.emit(&[], &mut buffer, &emit_info, &mut Default::default());
 
         // Label 1 after the instruction.
         let label1 = buffer.get_label();

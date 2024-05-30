@@ -76,7 +76,7 @@ impl RunCommand {
     pub fn execute(mut self) -> Result<()> {
         self.run.common.init_logging()?;
 
-        let mut config = self.run.common.config(None, None)?;
+        let mut config = self.run.common.config(None)?;
 
         if self.run.common.wasm.timeout.is_some() {
             config.epoch_interruption(true);

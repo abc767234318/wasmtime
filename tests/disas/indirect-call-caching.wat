@@ -1,5 +1,5 @@
 ;;! target = "x86_64"
-;;! flags = [ "-Ocache-call-indirects=y" ]
+;;! flags = [ "-Wcache-call-indirects=y" ]
 
 ;; This test checks that we get the indirect-call caching optimization
 ;; where it should be applicable (immutable table, null 0-index).
@@ -19,7 +19,7 @@
   call_indirect (result i32))
 
  (elem (i32.const 1) func $f1 $f2 $f3))
-;; function u0:0(i64 vmctx, i64) -> i32 tail {
+;; function u0:0(i64 vmctx, i64) -> i32 fast {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1
@@ -33,7 +33,7 @@
 ;; @0041                               return v2
 ;; }
 ;;
-;; function u0:1(i64 vmctx, i64) -> i32 tail {
+;; function u0:1(i64 vmctx, i64) -> i32 fast {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1
@@ -47,7 +47,7 @@
 ;; @0046                               return v2
 ;; }
 ;;
-;; function u0:2(i64 vmctx, i64) -> i32 tail {
+;; function u0:2(i64 vmctx, i64) -> i32 fast {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1
@@ -61,20 +61,20 @@
 ;; @004b                               return v2
 ;; }
 ;;
-;; function u0:3(i64 vmctx, i64, i32) -> i32 tail {
+;; function u0:3(i64 vmctx, i64, i32) -> i32 fast {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1
 ;;     gv3 = vmctx
 ;;     gv4 = load.i64 notrap aligned readonly gv3+88
-;;     sig0 = (i64 vmctx, i64) -> i32 tail
+;;     sig0 = (i64 vmctx, i64) -> i32 fast
 ;;     sig1 = (i64 vmctx, i32 uext, i32 uext) -> i64 system_v
 ;;     fn0 = colocated u1:9 sig1
 ;;     stack_limit = gv2
 ;;
 ;;                                 block0(v0: i64, v1: i64, v2: i32):
 ;; @0050                               v4 = global_value.i64 gv3
-;; @0050                               v5 = iadd_imm v4, 240
+;; @0050                               v5 = iadd_imm v4, 272
 ;; @0050                               v6 = load.i32 notrap aligned v5+8
 ;; @0050                               v7 = load.i64 notrap aligned v5
 ;; @0050                               v8 = icmp eq v6, v2
@@ -112,11 +112,11 @@
 ;; @0050                               v23 = global_value.i64 gv3
 ;; @0050                               v24 = load.i64 notrap aligned readonly v23+80
 ;; @0050                               v25 = load.i32 notrap aligned readonly v24
-;; @0050                               v26 = load.i32 icall_null aligned readonly v19+16
+;; @0050                               v26 = load.i32 icall_null aligned readonly v19+24
 ;; @0050                               v27 = icmp eq v26, v25
 ;; @0050                               trapz v27, bad_sig
-;; @0050                               v28 = load.i64 notrap aligned readonly v19+8
-;; @0050                               v29 = load.i64 notrap aligned readonly v19+24
+;; @0050                               v28 = load.i64 notrap aligned readonly v19+16
+;; @0050                               v29 = load.i64 notrap aligned readonly v19+32
 ;; @0050                               v30 = icmp eq v29, v4
 ;; @0050                               brif v30, block4, block3(v28, v29)
 ;;

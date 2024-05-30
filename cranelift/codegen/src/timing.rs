@@ -62,6 +62,7 @@ define_passes! {
     domtree: "Dominator tree",
     loop_analysis: "Loop analysis",
     preopt: "Pre-legalization rewriting",
+    dce: "Dead code elimination",
     egraph: "Egraph based optimizations",
     gvn: "Global value numbering",
     licm: "Loop invariant code motion",

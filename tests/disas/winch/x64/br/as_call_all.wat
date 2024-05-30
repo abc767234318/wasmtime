@@ -6,7 +6,7 @@
     (block (result i32) (call $f (br 0 (i32.const 15))))
   )
 )
-;; wasm[0]::function[0]::f:
+;; wasm[0]::function[0]:
 ;;       pushq   %rbp
 ;;       movq    %rsp, %rbp
 ;;       movq    8(%rdi), %r11

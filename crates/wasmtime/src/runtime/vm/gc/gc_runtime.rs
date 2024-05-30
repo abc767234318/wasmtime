@@ -1,13 +1,10 @@
 //! Traits for abstracting over our different garbage collectors.
 
-use crate::prelude::*;
 use crate::runtime::vm::{
     ExternRefHostDataId, ExternRefHostDataTable, SendSyncPtr, VMExternRef, VMGcHeader, VMGcRef,
 };
 use anyhow::Result;
-use core::marker;
-use core::ptr;
-use core::{any::Any, num::NonZeroUsize};
+use std::{any::Any, num::NonZeroUsize};
 
 /// Trait for integrating a garbage collector with the runtime.
 ///
@@ -372,7 +369,7 @@ impl<'a> Iterator for GcRootsIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let root = GcRoot {
             raw: self.list.0.get(self.index).copied()?,
-            _phantom: marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         };
         self.index += 1;
         Some(root)
@@ -387,7 +384,7 @@ impl<'a> Iterator for GcRootsIter<'a> {
 /// `VMGcRef`'s referent during the course of a GC.
 pub struct GcRoot<'a> {
     raw: RawGcRoot,
-    _phantom: marker::PhantomData<&'a mut VMGcRef>,
+    _phantom: std::marker::PhantomData<&'a mut VMGcRef>,
 }
 
 impl GcRoot<'_> {
@@ -403,9 +400,9 @@ impl GcRoot<'_> {
     #[inline]
     pub fn get(&self) -> VMGcRef {
         match self.raw {
-            RawGcRoot::NonStack(ptr) => unsafe { ptr::read(ptr.as_ptr()) },
+            RawGcRoot::NonStack(ptr) => unsafe { std::ptr::read(ptr.as_ptr()) },
             RawGcRoot::Stack(ptr) => unsafe {
-                let r64 = ptr::read(ptr.as_ptr());
+                let r64 = std::ptr::read(ptr.as_ptr());
                 VMGcRef::from_r64(r64)
                     .expect("valid r64")
                     .expect("non-null")
@@ -423,11 +420,11 @@ impl GcRoot<'_> {
     pub fn set(&mut self, new_ref: VMGcRef) {
         match self.raw {
             RawGcRoot::NonStack(ptr) => unsafe {
-                ptr::write(ptr.as_ptr(), new_ref);
+                std::ptr::write(ptr.as_ptr(), new_ref);
             },
             RawGcRoot::Stack(ptr) => unsafe {
                 let r64 = new_ref.into_r64();
-                ptr::write(ptr.as_ptr(), r64);
+                std::ptr::write(ptr.as_ptr(), r64);
             },
         }
     }

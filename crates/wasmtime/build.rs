@@ -10,7 +10,6 @@ fn build_c_helpers() {
     use wasmtime_versioned_export_macros::versioned_suffix;
 
     // NB: duplicating a workaround in the wasmtime-fiber build script.
-    println!("cargo:rustc-check-cfg=cfg(asan)");
     match std::env::var("CARGO_CFG_SANITIZE") {
         Ok(s) if s == "address" => {
             println!("cargo:rustc-cfg=asan");
@@ -35,8 +34,4 @@ fn build_c_helpers() {
     println!("cargo:rerun-if-changed=src/runtime/vm/helpers.c");
     build.file("src/runtime/vm/helpers.c");
     build.compile("wasmtime-helpers");
-
-    if os == "linux" {
-        println!("cargo:rustc-link-lib=m");
-    }
 }

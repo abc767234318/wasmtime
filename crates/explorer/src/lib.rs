@@ -2,7 +2,6 @@ use anyhow::Result;
 use capstone::arch::BuildsCapstone;
 use serde_derive::Serialize;
 use std::{io::Write, str::FromStr};
-use wasmtime_environ::demangle_function_name;
 
 pub fn generate(
     config: &wasmtime::Config,
@@ -84,9 +83,6 @@ struct AnnotatedAsm {
 
 #[derive(Serialize, Debug)]
 struct AnnotatedFunction {
-    func_index: u32,
-    name: Option<String>,
-    demangled_name: Option<String>,
     instructions: Vec<AnnotatedInstruction>,
 }
 
@@ -133,9 +129,10 @@ fn annotate_asm(
     };
 
     let functions = module
-        .functions()
-        .map(|function| {
-            let body = &text[function.offset..][..function.len];
+        .function_locations()
+        .into_iter()
+        .map(|(start, len)| {
+            let body = &text[start..][..len];
 
             let mut cs = match target.architecture {
                 target_lexicon::Architecture::Aarch64(_) => capstone::Capstone::new()
@@ -168,13 +165,13 @@ fn annotate_asm(
             cs.set_skipdata(true).unwrap();
 
             let instructions = cs
-                .disasm_all(body, function.offset as u64)
+                .disasm_all(body, start as u64)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             let instructions = instructions
                 .iter()
                 .map(|inst| {
                     let address = u32::try_from(inst.address()).unwrap();
-                    let wasm_offset = wasm_offset_for_address(function.offset, address);
+                    let wasm_offset = wasm_offset_for_address(start, address);
                     Ok(AnnotatedInstruction {
                         wasm_offset,
                         address,
@@ -184,24 +181,7 @@ fn annotate_asm(
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
-
-            let demangled_name = if let Some(name) = &function.name {
-                let mut demangled = String::new();
-                if demangle_function_name(&mut demangled, &name).is_ok() {
-                    Some(demangled)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            Ok(AnnotatedFunction {
-                func_index: function.index.as_u32(),
-                name: function.name,
-                demangled_name,
-                instructions,
-            })
+            Ok(AnnotatedFunction { instructions })
         })
         .collect::<Result<Vec<_>>>()?;
 

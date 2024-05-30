@@ -11,7 +11,6 @@
 //!         sudo perf report -i perf.jit.data -F+period,srcline
 //! Note: For descriptive results, the WASM file being executed should contain dwarf debug data
 
-use crate::prelude::*;
 use crate::profiling_agent::ProfilingAgent;
 use anyhow::Result;
 use std::process;
@@ -29,7 +28,7 @@ struct JitDumpAgent {
 /// Process-wide JIT dump file. Perf only accepts a unique file per process, in the injection step.
 static JITDUMP_FILE: Mutex<Option<JitDumpFile>> = Mutex::new(None);
 
-/// Initialize a JitDumpAgent and write out the header.
+/// Intialize a JitDumpAgent and write out the header.
 pub fn new() -> Result<Box<dyn ProfilingAgent>> {
     let mut jitdump_file = JITDUMP_FILE.lock().unwrap();
 

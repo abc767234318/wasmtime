@@ -2,10 +2,8 @@
 //! trampolines.
 
 use crate::module::ModuleRegistry;
-use crate::prelude::*;
-use crate::runtime::vm::{SendSyncPtr, VMArrayCallHostFuncContext, VMFuncRef};
-use alloc::sync::Arc;
-use core::ptr::NonNull;
+use crate::runtime::vm::{SendSyncPtr, VMFuncRef, VMNativeCallHostFuncContext};
+use std::{ptr::NonNull, sync::Arc};
 
 /// An arena of `VMFuncRef`s.
 ///
@@ -55,9 +53,9 @@ impl FuncRefs {
     /// `FuncRefs` and only while the store holding this `FuncRefs` exists.
     pub unsafe fn push(&mut self, func_ref: VMFuncRef) -> NonNull<VMFuncRef> {
         debug_assert!(func_ref.wasm_call.is_none());
-        // Debug assert that the vmctx is a `VMArrayCallHostFuncContext` as
+        // Debug assert that the vmctx is a `VMNativeCallHostFuncContext` as
         // that is the only kind that can have holes.
-        let _ = unsafe { VMArrayCallHostFuncContext::from_opaque(func_ref.vmctx) };
+        let _ = unsafe { VMNativeCallHostFuncContext::from_opaque(func_ref.vmctx) };
 
         let func_ref = self.bump.alloc(func_ref);
         let unpatched = SendSyncPtr::from(func_ref);
@@ -73,11 +71,11 @@ impl FuncRefs {
                 let func_ref = f.as_mut();
                 debug_assert!(func_ref.wasm_call.is_none());
 
-                // Debug assert that the vmctx is a `VMArrayCallHostFuncContext` as
+                // Debug assert that the vmctx is a `VMNativeCallHostFuncContext` as
                 // that is the only kind that can have holes.
-                let _ = VMArrayCallHostFuncContext::from_opaque(func_ref.vmctx);
+                let _ = VMNativeCallHostFuncContext::from_opaque(func_ref.vmctx);
 
-                func_ref.wasm_call = modules.wasm_to_array_trampoline(func_ref.type_index);
+                func_ref.wasm_call = modules.wasm_to_native_trampoline(func_ref.type_index);
                 func_ref.wasm_call.is_none()
             }
         });

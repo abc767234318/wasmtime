@@ -10,13 +10,12 @@ workspace = true
 
 [dependencies]
 wasi = { version = "0.11.0", default-features = false }
-wit-bindgen-rust-macro = { workspace = true }
+wit-bindgen = { workspace = true, default-features = false, features = ["macros"] }
 byte-array-literals = { workspace = true }
-bitflags = { workspace = true }
 
 [build-dependencies]
 wasm-encoder = { workspace = true }
-object = { workspace = true, default-features = false, features = ["archive", "std"] }
+object = { workspace = true, default-features = false, features = ["archive"] }
 
 [lib]
 test = false

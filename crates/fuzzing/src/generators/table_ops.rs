@@ -83,9 +83,8 @@ impl TableOps {
         let mut tables = TableSection::new();
         tables.table(TableType {
             element_type: RefType::EXTERNREF,
-            minimum: self.table_size as u64,
+            minimum: self.table_size as u32,
             maximum: None,
-            table64: false,
         });
 
         // Define our globals.

@@ -180,7 +180,6 @@
 #define WASMTIME_API_H
 
 #include <wasi.h>
-#include <wasmtime/conf.h>
 // clang-format off
 // IWYU pragma: begin_exports
 #include <wasmtime/config.h>
@@ -206,11 +205,11 @@
 /**
  * \brief Wasmtime version string.
  */
-#define WASMTIME_VERSION "22.0.0"
+#define WASMTIME_VERSION "21.0.0"
 /**
  * \brief Wasmtime major version number.
  */
-#define WASMTIME_VERSION_MAJOR 22
+#define WASMTIME_VERSION_MAJOR 21
 /**
  * \brief Wasmtime minor version number.
  */
@@ -223,8 +222,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#ifdef WASMTIME_FEATURE_WAT
 
 /**
  * \brief Converts from the text format of WebAssembly to the binary format.
@@ -243,8 +240,6 @@ extern "C" {
  */
 WASM_API_EXTERN wasmtime_error_t *
 wasmtime_wat2wasm(const char *wat, size_t wat_len, wasm_byte_vec_t *ret);
-
-#endif
 
 #ifdef __cplusplus
 } // extern "C"

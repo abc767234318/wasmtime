@@ -27,8 +27,6 @@ extern "C" {
  */
 typedef struct wasmtime_module wasmtime_module_t;
 
-#ifdef WASMTIME_FEATURE_COMPILER
-
 /**
  * \brief Compiles a WebAssembly binary into a #wasmtime_module_t
  *
@@ -47,8 +45,6 @@ WASM_API_EXTERN wasmtime_error_t *wasmtime_module_new(wasm_engine_t *engine,
                                                       const uint8_t *wasm,
                                                       size_t wasm_len,
                                                       wasmtime_module_t **ret);
-
-#endif // WASMTIME_FEATURE_COMPILER
 
 /**
  * \brief Deletes a module.
@@ -72,8 +68,6 @@ WASM_API_EXTERN void wasmtime_module_imports(const wasmtime_module_t *module,
  */
 WASM_API_EXTERN void wasmtime_module_exports(const wasmtime_module_t *module,
                                              wasm_exporttype_vec_t *out);
-
-#ifdef WASMTIME_FEATURE_COMPILER
 
 /**
  * \brief Validate a WebAssembly binary.
@@ -107,8 +101,6 @@ wasmtime_module_validate(wasm_engine_t *engine, const uint8_t *wasm,
 WASM_API_EXTERN wasmtime_error_t *
 wasmtime_module_serialize(wasmtime_module_t *module, wasm_byte_vec_t *ret);
 
-#endif // WASMTIME_FEATURE_COMPILER
-
 /**
  * \brief Build a module from serialized data.
  *
@@ -117,7 +109,7 @@ wasmtime_module_serialize(wasmtime_module_t *module, wasm_byte_vec_t *ret);
  *
  * This function is not safe to receive arbitrary user input. See the Rust
  * documentation for more information on what inputs are safe to pass in here
- * (e.g. only that of `wasmtime_module_serialize`)
+ * (e.g. only that of #wasmtime_module_serialize)
  */
 WASM_API_EXTERN wasmtime_error_t *
 wasmtime_module_deserialize(wasm_engine_t *engine, const uint8_t *bytes,
@@ -135,7 +127,7 @@ wasmtime_module_deserialize(wasm_engine_t *engine, const uint8_t *bytes,
  *
  * This function is not safe to receive arbitrary user input. See the Rust
  * documentation for more information on what inputs are safe to pass in here
- * (e.g. only that of `wasmtime_module_serialize`)
+ * (e.g. only that of #wasmtime_module_serialize)
  */
 WASM_API_EXTERN wasmtime_error_t *
 wasmtime_module_deserialize_file(wasm_engine_t *engine, const char *path,

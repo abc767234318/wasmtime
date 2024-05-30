@@ -163,7 +163,7 @@ impl Val {
         }
     }
 
-    /// Check whether the value is a memory offset.
+    /// Check wheter the value is a memory offset.
     pub fn is_mem(&self) -> bool {
         match *self {
             Self::Memory(_) => true,

@@ -138,7 +138,6 @@ pub extern "C" fn wasmtime_config_wasm_memory64_set(c: &mut wasm_config_t, enabl
 }
 
 #[no_mangle]
-#[cfg(any(feature = "cranelift", feature = "winch"))]
 pub extern "C" fn wasmtime_config_strategy_set(
     c: &mut wasm_config_t,
     strategy: wasmtime_strategy_t,
@@ -157,7 +156,6 @@ pub extern "C" fn wasmtime_config_parallel_compilation_set(c: &mut wasm_config_t
 }
 
 #[no_mangle]
-#[cfg(any(feature = "cranelift", feature = "winch"))]
 pub extern "C" fn wasmtime_config_cranelift_debug_verifier_set(
     c: &mut wasm_config_t,
     enable: bool,
@@ -166,7 +164,6 @@ pub extern "C" fn wasmtime_config_cranelift_debug_verifier_set(
 }
 
 #[no_mangle]
-#[cfg(any(feature = "cranelift", feature = "winch"))]
 pub extern "C" fn wasmtime_config_cranelift_nan_canonicalization_set(
     c: &mut wasm_config_t,
     enable: bool,
@@ -175,7 +172,6 @@ pub extern "C" fn wasmtime_config_cranelift_nan_canonicalization_set(
 }
 
 #[no_mangle]
-#[cfg(any(feature = "cranelift", feature = "winch"))]
 pub extern "C" fn wasmtime_config_cranelift_opt_level_set(
     c: &mut wasm_config_t,
     opt_level: wasmtime_opt_level_t,
@@ -255,7 +251,6 @@ pub extern "C" fn wasmtime_config_native_unwind_info_set(c: &mut wasm_config_t, 
 }
 
 #[no_mangle]
-#[cfg(any(feature = "cranelift", feature = "winch"))]
 pub unsafe extern "C" fn wasmtime_config_target_set(
     c: &mut wasm_config_t,
     target: *const c_char,
@@ -270,7 +265,6 @@ pub extern "C" fn wasmtime_config_macos_use_mach_ports_set(c: &mut wasm_config_t
 }
 
 #[no_mangle]
-#[cfg(any(feature = "cranelift", feature = "winch"))]
 pub unsafe extern "C" fn wasmtime_config_cranelift_flag_enable(
     c: &mut wasm_config_t,
     flag: *const c_char,
@@ -280,7 +274,6 @@ pub unsafe extern "C" fn wasmtime_config_cranelift_flag_enable(
 }
 
 #[no_mangle]
-#[cfg(any(feature = "cranelift", feature = "winch"))]
 pub unsafe extern "C" fn wasmtime_config_cranelift_flag_set(
     c: &mut wasm_config_t,
     flag: *const c_char,

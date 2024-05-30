@@ -1,4 +1,3 @@
-use crate::prelude::*;
 use std::collections::HashMap;
 use wasm_encoder::{TypeSection, ValType};
 

@@ -138,7 +138,7 @@ unsafe extern "C" fn trap_handler(
         // Note that if we use `longjmp` instead of `siglongjmp` then
         // the problem is fixed. The problem with that, however, is that
         // `setjmp` is much slower than `sigsetjmp` due to the
-        // preservation of the process's signal mask. The reason
+        // preservation of the proceses signal mask. The reason
         // `longjmp` appears to work is that it seems to call a function
         // (according to published macOS sources) called
         // `_sigunaltstack` which updates the kernel to say the
@@ -255,12 +255,6 @@ unsafe fn get_pc_and_fp(cx: *mut libc::c_void, _signum: libc::c_int) -> (*const 
                 cx.mc_gpregs.gp_elr as *const u8,
                 cx.mc_gpregs.gp_x[29] as usize,
             )
-        } else if #[cfg(all(target_os = "openbsd", target_arch = "x86_64"))] {
-            let cx = &*(cx as *const libc::ucontext_t);
-            (
-                cx.sc_rip as *const u8,
-                cx.sc_rbp as usize,
-            )
         }
         else {
             compile_error!("unsupported platform");
@@ -314,7 +308,7 @@ pub fn lazy_per_thread_init() {
     // This thread local is purely used to register a `Stack` to get deallocated
     // when the thread exists. Otherwise this function is only ever called at
     // most once per-thread.
-    std::thread_local! {
+    thread_local! {
         static STACK: RefCell<Option<Stack>> = const { RefCell::new(None) };
     }
 

@@ -2,7 +2,6 @@
 //! wasm module (except its callstack and register state). An
 //! `InstanceHandle` is a reference-counting handle for an `Instance`.
 
-use crate::prelude::*;
 use crate::runtime::vm::const_expr::{ConstEvalContext, ConstExprEvaluator};
 use crate::runtime::vm::export::Export;
 use crate::runtime::vm::memory::{Memory, RuntimeMemoryCreator};
@@ -16,15 +15,16 @@ use crate::runtime::vm::{
     ExportFunction, ExportGlobal, ExportMemory, ExportTable, GcStore, Imports, ModuleRuntimeInfo,
     SendSyncPtr, Store, VMFunctionBody, VMGcRef, WasmFault,
 };
-use alloc::sync::Arc;
-use anyhow::{Error, Result};
-use core::alloc::Layout;
-use core::any::Any;
-use core::ops::Range;
-use core::ptr::NonNull;
-use core::sync::atomic::AtomicU64;
-use core::{mem, ptr};
+use anyhow::Error;
+use anyhow::Result;
 use sptr::Strict;
+use std::alloc::{self, Layout};
+use std::any::Any;
+use std::ops::Range;
+use std::ptr::NonNull;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
+use std::{mem, ptr};
 use wasmtime_environ::{
     packed_option::ReservedValue, DataIndex, DefinedGlobalIndex, DefinedMemoryIndex,
     DefinedTableIndex, ElemIndex, EntityIndex, EntityRef, EntitySet, FuncIndex, GlobalIndex,
@@ -167,9 +167,9 @@ impl Instance {
     ) -> InstanceHandle {
         // The allocation must be *at least* the size required of `Instance`.
         let layout = Self::alloc_layout(req.runtime_info.offsets());
-        let ptr = alloc::alloc::alloc(layout);
+        let ptr = alloc::alloc(layout);
         if ptr.is_null() {
-            alloc::alloc::handle_alloc_error(layout);
+            alloc::handle_alloc_error(layout);
         }
         let ptr = ptr.cast::<Instance>();
 
@@ -191,7 +191,7 @@ impl Instance {
                 host_state: req.host_state,
                 vmctx_self_reference: SendSyncPtr::new(NonNull::new(ptr.add(1).cast()).unwrap()),
                 vmctx: VMContext {
-                    _marker: core::marker::PhantomPinned,
+                    _marker: std::marker::PhantomPinned,
                 },
                 #[cfg(feature = "wmemcheck")]
                 wmemcheck_state: {
@@ -521,7 +521,7 @@ impl Instance {
         // today so the `sptr` crate is used. This crate provides the extension
         // trait `Strict` but the method names conflict with the nightly methods
         // so a different syntax is used to invoke methods here.
-        let addr = ptr::addr_of!(self.vmctx);
+        let addr = std::ptr::addr_of!(self.vmctx);
         Strict::with_addr(self.vmctx_self_reference.as_ptr(), Strict::addr(addr))
     }
 
@@ -579,7 +579,7 @@ impl Instance {
     /// Specifically, it provides access to the key-value pairs, where the keys
     /// are export names, and the values are export declarations which can be
     /// resolved `lookup_by_declaration`.
-    pub fn exports(&self) -> wasmparser::collections::index_map::Iter<String, EntityIndex> {
+    pub fn exports(&self) -> indexmap::map::Iter<String, EntityIndex> {
         self.module().exports.iter()
     }
 
@@ -719,6 +719,10 @@ impl Instance {
 
         let func_ref = if let Some(def_index) = self.module().defined_func_index(index) {
             VMFuncRef {
+                native_call: self
+                    .runtime_info
+                    .native_to_wasm_trampoline(def_index)
+                    .expect("should have native-to-Wasm trampoline for escaping function"),
                 array_call: self
                     .runtime_info
                     .array_to_wasm_trampoline(def_index)
@@ -730,6 +734,7 @@ impl Instance {
         } else {
             let import = self.imported_function(index);
             VMFuncRef {
+                native_call: import.native_call,
                 array_call: import.array_call,
                 wasm_call: Some(import.wasm_call),
                 vmctx: import.vmctx,
@@ -740,7 +745,7 @@ impl Instance {
         // Safety: we have a `&mut self`, so we have exclusive access
         // to this Instance.
         unsafe {
-            ptr::write(into, func_ref);
+            std::ptr::write(into, func_ref);
         }
     }
 
@@ -854,7 +859,7 @@ impl Instance {
                     dst,
                     elements
                         .iter()
-                        .map(|idx| self.get_func_ref(*idx).unwrap_or(ptr::null_mut())),
+                        .map(|idx| self.get_func_ref(*idx).unwrap_or(std::ptr::null_mut())),
                 )?;
             }
             TableSegmentElements::Expressions(exprs) => {
@@ -1119,7 +1124,7 @@ impl Instance {
                 let func_index = precomputed.get(i as usize).cloned();
                 let func_ref = func_index
                     .and_then(|func_index| self.get_func_ref(func_index))
-                    .unwrap_or(ptr::null_mut());
+                    .unwrap_or(std::ptr::null_mut());
                 self.tables[idx]
                     .1
                     .set(i, TableElement::FuncRef(func_ref))
@@ -1174,7 +1179,7 @@ impl Instance {
         store: StorePtr,
         imports: Imports,
     ) {
-        assert!(ptr::eq(module, self.module().as_ref()));
+        assert!(std::ptr::eq(module, self.module().as_ref()));
 
         *self.vmctx_plus_offset_mut(offsets.vmctx_magic()) = VMCONTEXT_MAGIC;
         self.set_callee(None);
@@ -1359,7 +1364,7 @@ impl InstanceHandle {
     /// Specifically, it provides access to the key-value pairs, where the keys
     /// are export names, and the values are export declarations which can be
     /// resolved `lookup_by_declaration`.
-    pub fn exports(&self) -> wasmparser::collections::index_map::Iter<String, EntityIndex> {
+    pub fn exports(&self) -> indexmap::map::Iter<String, EntityIndex> {
         self.instance().exports()
     }
 

@@ -499,7 +499,7 @@ pub(crate) fn generate(
     settings: &SettingGroup,
     parent_group: ParentGroup,
     filename: &str,
-    out_dir: &std::path::Path,
+    out_dir: &str,
 ) -> Result<(), error::Error> {
     let mut fmt = Formatter::new();
     gen_group(settings, parent_group, &mut fmt);

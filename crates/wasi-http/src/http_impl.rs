@@ -15,7 +15,7 @@ use http_body_util::{BodyExt, Empty};
 use hyper::Method;
 use wasmtime::component::Resource;
 
-impl outgoing_handler::Host for dyn WasiHttpView + '_ {
+impl<T: WasiHttpView> outgoing_handler::Host for T {
     fn handle(
         &mut self,
         request_id: Resource<HostOutgoingRequest>,
@@ -54,16 +54,23 @@ impl outgoing_handler::Host for dyn WasiHttpView + '_ {
             },
         });
 
-        let (use_tls, scheme) = match req.scheme.unwrap_or(Scheme::Https) {
-            Scheme::Http => (false, http::uri::Scheme::HTTP),
-            Scheme::Https => (true, http::uri::Scheme::HTTPS),
+        let (use_tls, scheme, port) = match req.scheme.unwrap_or(Scheme::Https) {
+            Scheme::Http => (false, http::uri::Scheme::HTTP, 80),
+            Scheme::Https => (true, http::uri::Scheme::HTTPS, 443),
 
             // We can only support http/https
             Scheme::Other(_) => return Err(types::ErrorCode::HttpProtocolError.into()),
         };
 
-        let authority = req.authority.unwrap_or_else(String::new);
-
+        let authority = if let Some(authority) = req.authority {
+            if authority.find(':').is_some() {
+                authority
+            } else {
+                format!("{}:{port}", authority)
+            }
+        } else {
+            String::new()
+        };
         builder = builder.header(hyper::header::HOST, &authority);
 
         let mut uri = http::Uri::builder()

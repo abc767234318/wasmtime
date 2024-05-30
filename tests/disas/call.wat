@@ -11,11 +11,11 @@
   (start $main)
 )
 
-;; function u0:0(i64 vmctx, i64) tail {
+;; function u0:0(i64 vmctx, i64) fast {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1
-;;     sig0 = (i64 vmctx, i64) -> i32 tail
+;;     sig0 = (i64 vmctx, i64) -> i32 fast
 ;;     fn0 = colocated u0:1 sig0
 ;;     stack_limit = gv2
 ;;
@@ -29,7 +29,7 @@
 ;; @0028                               return
 ;; }
 ;;
-;; function u0:1(i64 vmctx, i64) -> i32 tail {
+;; function u0:1(i64 vmctx, i64) -> i32 fast {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1

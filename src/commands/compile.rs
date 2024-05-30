@@ -61,7 +61,7 @@ impl CompileCommand {
     pub fn execute(mut self) -> Result<()> {
         self.common.init_logging()?;
 
-        let mut config = self.common.config(self.target.as_deref(), None)?;
+        let mut config = self.common.config(self.target.as_deref())?;
 
         if let Some(path) = self.emit_clif {
             if !path.exists() {

@@ -7,7 +7,6 @@ use cranelift_codegen::ir::pcc::Fact;
 use cranelift_codegen::ir::types::*;
 use cranelift_codegen::ir::{ArgumentPurpose, Function, InstBuilder, MemFlags};
 use cranelift_codegen::isa::{TargetFrontendConfig, TargetIsa};
-use cranelift_entity::packed_option::ReservedValue;
 use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 use cranelift_frontend::FunctionBuilder;
 use cranelift_frontend::Variable;
@@ -119,7 +118,7 @@ pub struct FuncEnvironment<'module_environment> {
     /// VMRuntimeLimits` for this function's vmctx argument. This pointer is stored
     /// in the vmctx itself, but never changes for the lifetime of the function,
     /// so if we load it up front we can continue to use it throughout.
-    vmruntime_limits_ptr: ir::Value,
+    vmruntime_limits_ptr: cranelift_frontend::Variable,
 
     /// A cached epoch deadline value, when performing epoch-based
     /// interruption. Loaded from `VMRuntimeLimits` and reloaded after
@@ -172,7 +171,7 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
             fuel_var: Variable::new(0),
             epoch_deadline_var: Variable::new(0),
             epoch_ptr_var: Variable::new(0),
-            vmruntime_limits_ptr: ir::Value::reserved_value(),
+            vmruntime_limits_ptr: Variable::new(0),
 
             // Start with at least one fuel being consumed because even empty
             // functions should consume at least some fuel.
@@ -285,14 +284,14 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
         // function. This is possible since we know that the pointer never
         // changes for the lifetime of the function.
         let pointer_type = self.pointer_type();
+        builder.declare_var(self.vmruntime_limits_ptr, pointer_type);
         let vmctx = self.vmctx(builder.func);
         let base = builder.ins().global_value(pointer_type, vmctx);
         let offset = i32::try_from(self.offsets.vmctx_runtime_limits()).unwrap();
-        debug_assert!(self.vmruntime_limits_ptr.is_reserved_value());
-        self.vmruntime_limits_ptr =
-            builder
-                .ins()
-                .load(pointer_type, ir::MemFlags::trusted(), base, offset);
+        let interrupt_ptr = builder
+            .ins()
+            .load(pointer_type, ir::MemFlags::trusted(), base, offset);
+        builder.def_var(self.vmruntime_limits_ptr, interrupt_ptr);
     }
 
     fn fuel_function_entry(&mut self, builder: &mut FunctionBuilder<'_>) {
@@ -439,7 +438,7 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
 
     /// Loads the fuel consumption value from `VMRuntimeLimits` into `self.fuel_var`
     fn fuel_load_into_var(&mut self, builder: &mut FunctionBuilder<'_>) {
-        let (addr, offset) = self.fuel_addr_offset();
+        let (addr, offset) = self.fuel_addr_offset(builder);
         let fuel = builder
             .ins()
             .load(ir::types::I64, ir::MemFlags::trusted(), addr, offset);
@@ -449,7 +448,7 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
     /// Stores the fuel consumption value from `self.fuel_var` into
     /// `VMRuntimeLimits`.
     fn fuel_save_from_var(&mut self, builder: &mut FunctionBuilder<'_>) {
-        let (addr, offset) = self.fuel_addr_offset();
+        let (addr, offset) = self.fuel_addr_offset(builder);
         let fuel_consumed = builder.use_var(self.fuel_var);
         builder
             .ins()
@@ -458,10 +457,12 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
 
     /// Returns the `(address, offset)` of the fuel consumption within
     /// `VMRuntimeLimits`, used to perform loads/stores later.
-    fn fuel_addr_offset(&mut self) -> (ir::Value, ir::immediates::Offset32) {
-        debug_assert!(!self.vmruntime_limits_ptr.is_reserved_value());
+    fn fuel_addr_offset(
+        &mut self,
+        builder: &mut FunctionBuilder<'_>,
+    ) -> (ir::Value, ir::immediates::Offset32) {
         (
-            self.vmruntime_limits_ptr,
+            builder.use_var(self.vmruntime_limits_ptr),
             i32::from(self.offsets.ptr.vmruntime_limits_fuel_consumed()).into(),
         )
     }
@@ -598,11 +599,12 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
     }
 
     fn epoch_load_deadline_into_var(&mut self, builder: &mut FunctionBuilder<'_>) {
+        let interrupts = builder.use_var(self.vmruntime_limits_ptr);
         let deadline =
             builder.ins().load(
                 ir::types::I64,
                 ir::MemFlags::trusted(),
-                self.vmruntime_limits_ptr,
+                interrupts,
                 ir::immediates::Offset32::new(
                     self.offsets.ptr.vmruntime_limits_epoch_deadline() as i32
                 ),
@@ -815,7 +817,6 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
         table_index: TableIndex,
         index: ir::Value,
         cold_blocks: bool,
-        lazy_init: bool,
     ) -> ir::Value {
         let pointer_type = self.pointer_type();
         self.ensure_table_exists(builder.func, table_index);
@@ -832,11 +833,6 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
             self.isa.flags().enable_table_access_spectre_mitigation(),
         );
         let value = builder.ins().load(pointer_type, flags, table_entry_addr, 0);
-
-        if !lazy_init {
-            return value;
-        }
-
         // Mask off the "initialized bit". See documentation on
         // FUNCREF_INIT_BIT in crates/environ/src/ref_bits.rs for more
         // details. Note that `FUNCREF_MASK` has type `usize` which may not be
@@ -1358,14 +1354,11 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
         cold_blocks: bool,
     ) -> WasmResult<Option<(ir::Value, ir::Value)>> {
         // Get the funcref pointer from the table.
-        let table = &self.env.module.table_plans[table_index];
-        let TableStyle::CallerChecksSignature { lazy_init } = table.style;
         let funcref_ptr = self.env.get_or_init_func_ref_table_elem(
             self.builder,
             table_index,
             callee,
             cold_blocks,
-            lazy_init,
         );
 
         // If necessary, check the signature.
@@ -1414,7 +1407,7 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
 
         // Generate a rustc compile error here if more styles are added in
         // the future as the following code is tailored to just this style.
-        let TableStyle::CallerChecksSignature { .. } = table.style;
+        let TableStyle::CallerChecksSignature = table.style;
 
         // Test if a type check is necessary for this table. If this table is a
         // table of typed functions and that type matches `ty_index`, then
@@ -1468,20 +1461,16 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
                 return CheckIndirectCallTypeSignature::StaticTrap;
             }
 
-            // Engine-indexed types don't show up until runtime and it's a Wasm
+            // Engine-indexed types don't show up until runtime and it's a wasm
             // validation error to perform a call through a non-function table,
             // so these cases are dynamically not reachable.
             WasmHeapType::ConcreteFunc(EngineOrModuleTypeIndex::Engine(_))
             | WasmHeapType::ConcreteFunc(EngineOrModuleTypeIndex::RecGroup(_))
             | WasmHeapType::Extern
-            | WasmHeapType::NoExtern
             | WasmHeapType::Any
-            | WasmHeapType::Eq
             | WasmHeapType::I31
             | WasmHeapType::Array
             | WasmHeapType::ConcreteArray(_)
-            | WasmHeapType::Struct
-            | WasmHeapType::ConcreteStruct(_)
             | WasmHeapType::None => {
                 unreachable!()
             }
@@ -1649,11 +1638,6 @@ impl TypeConvert for FuncEnvironment<'_> {
     fn lookup_heap_type(&self, ty: wasmparser::UnpackedIndex) -> WasmHeapType {
         wasmtime_environ::WasmparserTypeConverter::new(self.types, self.module).lookup_heap_type(ty)
     }
-
-    fn lookup_type_index(&self, index: wasmparser::UnpackedIndex) -> EngineOrModuleTypeIndex {
-        wasmtime_environ::WasmparserTypeConverter::new(self.types, self.module)
-            .lookup_type_index(index)
-    }
 }
 
 impl<'module_environment> TargetEnvironment for FuncEnvironment<'module_environment> {
@@ -1686,9 +1670,10 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
     }
 
     fn after_locals(&mut self, num_locals: usize) {
-        self.fuel_var = Variable::new(num_locals);
-        self.epoch_deadline_var = Variable::new(num_locals + 1);
-        self.epoch_ptr_var = Variable::new(num_locals + 2);
+        self.vmruntime_limits_ptr = Variable::new(num_locals);
+        self.fuel_var = Variable::new(num_locals + 1);
+        self.epoch_deadline_var = Variable::new(num_locals + 2);
+        self.epoch_ptr_var = Variable::new(num_locals + 3);
     }
 
     fn translate_table_grow(
@@ -1758,14 +1743,9 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
 
             // Function types.
             WasmHeapTopType::Func => match plan.style {
-                TableStyle::CallerChecksSignature { lazy_init } => Ok(self
-                    .get_or_init_func_ref_table_elem(
-                        builder,
-                        table_index,
-                        index,
-                        false,
-                        lazy_init,
-                    )),
+                TableStyle::CallerChecksSignature => {
+                    Ok(self.get_or_init_func_ref_table_elem(builder, table_index, index, false))
+                }
             },
         }
     }
@@ -1816,7 +1796,7 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
             // Function types.
             WasmHeapTopType::Func => {
                 match plan.style {
-                    TableStyle::CallerChecksSignature { lazy_init } => {
+                    TableStyle::CallerChecksSignature => {
                         let (elem_addr, flags) = table_data.prepare_table_addr(
                             builder,
                             index,
@@ -1826,13 +1806,9 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
                         // Set the "initialized bit". See doc-comment on
                         // `FUNCREF_INIT_BIT` in
                         // crates/environ/src/ref_bits.rs for details.
-                        let value_with_init_bit = if lazy_init {
-                            builder
-                                .ins()
-                                .bor_imm(value, Imm64::from(FUNCREF_INIT_BIT as i64))
-                        } else {
-                            value
-                        };
+                        let value_with_init_bit = builder
+                            .ins()
+                            .bor_imm(value, Imm64::from(FUNCREF_INIT_BIT as i64));
                         builder
                             .ins()
                             .store(flags, value_with_init_bit, elem_addr, 0);
@@ -2152,14 +2128,12 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
                     )
                 }
                 MemoryPlan {
-                    style:
-                        MemoryStyle::Static {
-                            byte_reservation: bound_bytes,
-                        },
+                    style: MemoryStyle::Static { bound: bound_pages },
                     offset_guard_size,
                     pre_guard_size: _,
                     memory: _,
                 } => {
+                    let bound_bytes = u64::from(bound_pages) * u64::from(WASM_PAGE_SIZE);
                     let (base_fact, data_mt) = if let Some(ptr_memtype) = ptr_memtype {
                         // Create a memtype representing the untyped memory region.
                         let data_mt = func.create_memory_type(ir::MemoryTypeData::Memory {

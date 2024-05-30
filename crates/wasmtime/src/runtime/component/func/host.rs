@@ -2,17 +2,16 @@ use crate::component::func::{LiftContext, LowerContext, Options};
 use crate::component::matching::InstanceType;
 use crate::component::storage::slice_to_storage_mut;
 use crate::component::{ComponentNamedList, ComponentType, Lift, Lower, Val};
-use crate::prelude::*;
 use crate::runtime::vm::component::{
     InstanceFlags, VMComponentContext, VMLowering, VMLoweringCallee,
 };
 use crate::runtime::vm::{VMFuncRef, VMMemoryDefinition, VMOpaqueContext};
 use crate::{AsContextMut, StoreContextMut, ValRaw};
-use alloc::sync::Arc;
 use anyhow::{bail, Context, Result};
-use core::any::Any;
-use core::mem::{self, MaybeUninit};
-use core::ptr::NonNull;
+use std::any::Any;
+use std::mem::{self, MaybeUninit};
+use std::ptr::NonNull;
+use std::sync::Arc;
 use wasmtime_environ::component::{
     CanonicalAbiInfo, InterfaceType, StringEncoding, TypeFuncIndex, MAX_FLAT_PARAMS,
     MAX_FLAT_RESULTS,
@@ -64,7 +63,7 @@ impl HostFunc {
                     memory,
                     realloc,
                     string_encoding,
-                    core::slice::from_raw_parts_mut(storage, storage_len),
+                    std::slice::from_raw_parts_mut(storage, storage_len),
                     |store, args| (*data)(store, args),
                 )
             })
@@ -276,8 +275,8 @@ where
 
 fn validate_inbounds<T: ComponentType>(memory: &[u8], ptr: &ValRaw) -> Result<usize> {
     // FIXME: needs memory64 support
-    let ptr = usize::try_from(ptr.get_u32()).err2anyhow()?;
-    if ptr % usize::try_from(T::ALIGN32).err2anyhow()? != 0 {
+    let ptr = usize::try_from(ptr.get_u32())?;
+    if ptr % usize::try_from(T::ALIGN32)? != 0 {
         bail!("pointer not aligned");
     }
     let end = match ptr.checked_add(T::SIZE32) {
@@ -395,8 +394,8 @@ where
 
 fn validate_inbounds_dynamic(abi: &CanonicalAbiInfo, memory: &[u8], ptr: &ValRaw) -> Result<usize> {
     // FIXME: needs memory64 support
-    let ptr = usize::try_from(ptr.get_u32()).err2anyhow()?;
-    if ptr % usize::try_from(abi.align32).err2anyhow()? != 0 {
+    let ptr = usize::try_from(ptr.get_u32())?;
+    if ptr % usize::try_from(abi.align32)? != 0 {
         bail!("pointer not aligned");
     }
     let end = match ptr.checked_add(usize::try_from(abi.size32).unwrap()) {
@@ -432,7 +431,7 @@ extern "C" fn dynamic_entrypoint<T, F>(
                 memory,
                 realloc,
                 string_encoding,
-                core::slice::from_raw_parts_mut(storage, storage_len),
+                std::slice::from_raw_parts_mut(storage, storage_len),
                 |store, params, results| (*data)(store, params, results),
             )
         })

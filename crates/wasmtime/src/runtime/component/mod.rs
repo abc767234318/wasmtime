@@ -97,6 +97,7 @@
 //!
 //! See the docs for [`bindgen!`] for more information on how to use it.
 
+#![cfg_attr(docsrs, doc(cfg(feature = "component-model")))]
 // rustdoc appears to lie about a warning above, so squelch it for now.
 #![allow(rustdoc::redundant_explicit_links)]
 
@@ -131,15 +132,12 @@ pub(crate) use self::resources::HostResourceData;
 pub mod __internal {
     pub use super::func::{
         bad_type_info, format_flags, lower_payload, typecheck_enum, typecheck_flags,
-        typecheck_record, typecheck_variant, ComponentVariant, LiftContext, LowerContext, Options,
+        typecheck_record, typecheck_variant, ComponentVariant, LiftContext, LowerContext,
+        MaybeUninitExt, Options,
     };
     pub use super::matching::InstanceType;
     pub use crate::map_maybe_uninit;
     pub use crate::store::StoreOpaque;
-    pub use crate::MaybeUninitExt;
-    pub use alloc::boxed::Box;
-    pub use alloc::string::String;
-    pub use alloc::vec::Vec;
     pub use anyhow;
     #[cfg(feature = "async")]
     pub use async_trait::async_trait;
@@ -514,7 +512,7 @@ pub(crate) use self::store::ComponentStoreData;
 ///         "wasi:filesystem/types/descriptor": MyDescriptorType,
 ///     },
 ///
-///     // Additional derive attributes to include on generated types (structs or enums).
+///     // Addtional derive attributes to include on generated types (structs or enums).
 ///     //
 ///     // These are deduplicated and attached in a deterministic order.
 ///     additional_derives: [

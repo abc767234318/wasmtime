@@ -1,6 +1,5 @@
 use super::index_allocator::{SimpleIndexAllocator, SlotId};
 use super::GcHeapAllocationIndex;
-use crate::prelude::*;
 use crate::runtime::vm::{GcHeap, GcRuntime, PoolingInstanceAllocatorConfig, Result};
 use anyhow::anyhow;
 use std::sync::Mutex;
@@ -40,7 +39,6 @@ impl GcHeapPool {
     }
 
     /// Are there zero slots in use right now?
-    #[allow(unused)] // some cfgs don't use this
     pub fn is_empty(&self) -> bool {
         self.index_allocator.is_empty()
     }

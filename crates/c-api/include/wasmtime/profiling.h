@@ -8,10 +8,7 @@
 #define WASMTIME_PROFILING_H
 
 #include <wasm.h>
-#include <wasmtime/conf.h>
 #include <wasmtime/error.h>
-
-#ifdef WASMTIME_FEATURE_PROFILING
 
 #ifdef __cplusplus
 extern "C" {
@@ -117,7 +114,5 @@ wasmtime_guestprofiler_finish(/* own */ wasmtime_guestprofiler_t *guestprofiler,
 #ifdef __cplusplus
 } // extern "C"
 #endif
-
-#endif // WASMTIME_FEATURE_PROFILING
 
 #endif // WASMTIME_PROFILING_H

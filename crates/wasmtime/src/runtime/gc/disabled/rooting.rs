@@ -1,16 +1,14 @@
-use crate::prelude::*;
 use crate::runtime::vm::{GcStore, VMExternRef, VMGcRef};
 use crate::{
     runtime::Uninhabited,
     store::{AutoAssertNoGc, StoreOpaque},
     AsContext, AsContextMut, GcRef, Result, RootedGcRef,
 };
-use core::any::Any;
-use core::ffi::c_void;
-use core::fmt::{self, Debug};
-use core::hash::{Hash, Hasher};
-use core::marker;
-use core::ops::Deref;
+use std::any::Any;
+use std::ffi::c_void;
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::ops::Deref;
 
 mod sealed {
     use super::*;
@@ -59,7 +57,7 @@ impl RootSet {
 /// compile time.
 pub struct Rooted<T: GcRef> {
     inner: Uninhabited,
-    _phantom: marker::PhantomData<T>,
+    _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T: GcRef> Clone for Rooted<T> {
@@ -71,7 +69,7 @@ impl<T: GcRef> Clone for Rooted<T> {
 impl<T: GcRef> Copy for Rooted<T> {}
 
 impl<T: GcRef> Debug for Rooted<T> {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.inner {}
     }
 }
@@ -85,7 +83,7 @@ impl<T: GcRef> PartialEq for Rooted<T> {
 impl<T: GcRef> Eq for Rooted<T> {}
 
 impl<T: GcRef> Hash for Rooted<T> {
-    fn hash<H: Hasher>(&self, _state: &mut H) {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {
         match self.inner {}
     }
 }
@@ -134,7 +132,7 @@ where
     C: AsContextMut,
 {
     inner: Uninhabited,
-    _phantom: marker::PhantomData<C>,
+    _phantom: std::marker::PhantomData<C>,
 }
 
 #[allow(missing_docs)]
@@ -174,11 +172,11 @@ where
     T: GcRef,
 {
     inner: Uninhabited,
-    _phantom: marker::PhantomData<T>,
+    _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T: GcRef> Debug for ManuallyRooted<T> {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.inner {}
     }
 }

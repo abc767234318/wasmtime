@@ -1,8 +1,6 @@
 use super::Resource;
-use crate::prelude::*;
-use alloc::collections::BTreeSet;
-use core::any::Any;
-use core::fmt;
+use std::any::Any;
+use std::collections::{BTreeSet, HashMap};
 
 #[derive(Debug)]
 /// Errors returned by operations on `ResourceTable`
@@ -18,8 +16,8 @@ pub enum ResourceTableError {
     HasChildren,
 }
 
-impl fmt::Display for ResourceTableError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for ResourceTableError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Full => write!(f, "resource table has no free keys"),
             Self::NotPresent => write!(f, "resource not present"),
@@ -28,8 +26,6 @@ impl fmt::Display for ResourceTableError {
         }
     }
 }
-
-#[cfg(feature = "std")]
 impl std::error::Error for ResourceTableError {}
 
 /// The `ResourceTable` type maps a `Resource<T>` to its `T`.
@@ -76,7 +72,7 @@ struct TableEntry {
     entry: Box<dyn Any + Send>,
     /// The index of the parent of this entry, if it has one.
     parent: Option<u32>,
-    /// The indices of any children of this entry.
+    /// The indicies of any children of this entry.
     children: BTreeSet<u32>,
 }
 
@@ -141,7 +137,7 @@ impl ResourceTable {
 
     /// Free an entry in the table, returning its [`TableEntry`]. Add the index to the free list.
     fn free_entry(&mut self, ix: usize) -> TableEntry {
-        let entry = match core::mem::replace(
+        let entry = match std::mem::replace(
             &mut self.entries[ix],
             Entry::Free {
                 next: self.free_head,
@@ -275,7 +271,7 @@ impl ResourceTable {
         let e = self.free_entry(key as usize);
         if let Some(parent) = e.parent {
             // Remove deleted resource from parent's child list.
-            // Parent must still be present because it can't be deleted while still having
+            // Parent must still be present because it cant be deleted while still having
             // children:
             self.occupied_mut(parent)
                 .expect("missing parent")
@@ -285,12 +281,11 @@ impl ResourceTable {
     }
 
     /// Zip the values of the map with mutable references to table entries corresponding to each
-    /// key. As the keys in the `HashMap` are unique, this iterator can give mutable references
+    /// key. As the keys in the [HashMap] are unique, this iterator can give mutable references
     /// with the same lifetime as the mutable reference to the [ResourceTable].
-    #[cfg(feature = "std")]
     pub fn iter_entries<'a, T>(
         &'a mut self,
-        map: std::collections::HashMap<u32, T>,
+        map: HashMap<u32, T>,
     ) -> impl Iterator<Item = (Result<&'a mut dyn Any, ResourceTableError>, T)> {
         map.into_iter().map(move |(k, v)| {
             let item = self

@@ -1,5 +1,4 @@
 use crate::component::*;
-use crate::prelude::*;
 use crate::Module;
 use crate::ScopeVec;
 use crate::{
@@ -972,13 +971,6 @@ mod pre_inlining {
     impl TypeConvert for PreInliningComponentTypes<'_> {
         fn lookup_heap_type(&self, index: wasmparser::UnpackedIndex) -> WasmHeapType {
             self.types.lookup_heap_type(index)
-        }
-
-        fn lookup_type_index(
-            &self,
-            index: wasmparser::UnpackedIndex,
-        ) -> wasmtime_types::EngineOrModuleTypeIndex {
-            self.types.lookup_type_index(index)
         }
     }
 }

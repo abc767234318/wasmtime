@@ -3,15 +3,15 @@ use crate::component::matching::InstanceType;
 use crate::component::{Component, ComponentNamedList, Func, Lift, Lower, ResourceType, TypedFunc};
 use crate::instance::OwnedImports;
 use crate::linker::DefinitionType;
-use crate::prelude::*;
 use crate::runtime::vm::component::{ComponentInstance, OwnedComponentInstance};
 use crate::runtime::vm::VMFuncRef;
 use crate::store::{StoreOpaque, Stored};
 use crate::{AsContextMut, Module, StoreContextMut};
-use alloc::sync::Arc;
 use anyhow::{anyhow, Context, Result};
-use core::marker;
-use core::ptr::{self, NonNull};
+use indexmap::IndexMap;
+use std::marker;
+use std::ptr::NonNull;
+use std::sync::Arc;
 use wasmtime_environ::{component::*, EngineOrModuleTypeIndex};
 use wasmtime_environ::{EntityIndex, EntityType, Global, PrimaryMap, WasmValType};
 
@@ -164,7 +164,7 @@ impl InstanceData {
             CoreDef::InstanceFlags(idx) => {
                 crate::runtime::vm::Export::Global(crate::runtime::vm::ExportGlobal {
                     definition: self.state.instance_flags(*idx).as_raw(),
-                    vmctx: ptr::null_mut(),
+                    vmctx: std::ptr::null_mut(),
                     global: Global {
                         wasm_ty: WasmValType::I32,
                         mutability: true,
@@ -324,9 +324,13 @@ impl<'a> Instantiator<'a> {
                 None => panic!("found unregistered signature: {sig:?}"),
             };
 
-            self.data
-                .state
-                .set_trampoline(idx, ptrs.wasm_call, ptrs.array_call, signature);
+            self.data.state.set_trampoline(
+                idx,
+                ptrs.wasm_call,
+                ptrs.native_call,
+                ptrs.array_call,
+                signature,
+            );
         }
 
         for initializer in env_component.initializers.iter() {
@@ -587,6 +591,7 @@ impl<T> InstancePre<T> {
     //
     // TODO: needs more docs
     #[cfg(feature = "async")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
     pub async fn instantiate_async(
         &self,
         mut store: impl AsContextMut<Data = T>,

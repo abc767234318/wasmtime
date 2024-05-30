@@ -15,16 +15,12 @@ set -e
 
 repo_dir="$(dirname $0)/.."
 cargo_toml="$repo_dir/Cargo.toml"
-target_dir="$CARGO_TARGET_DIR"
-if [[ "$target_dir" == "" ]]; then
-    target_dir="$repo_dir/target"
-fi
 
 # Build Wasmtime.
 cargo build --manifest-path "$cargo_toml" --release -p wasmtime-cli
 
 # Spawn `wasmtime serve` in the background.
-"$target_dir/release/wasmtime" serve "$@" &
+cargo run --manifest-path "$cargo_toml" --release -- serve "$@" &
 pid=$!
 
 # Give it a second to print its diagnostic information and get the server up and

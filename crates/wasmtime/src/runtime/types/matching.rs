@@ -1,9 +1,8 @@
-use crate::prelude::*;
 use crate::{linker::DefinitionType, Engine, FuncType};
 use anyhow::{anyhow, bail, Result};
 use wasmtime_environ::{
     EntityType, Global, Memory, ModuleTypes, Table, TypeTrace, VMSharedTypeIndex,
-    WasmCompositeType, WasmFieldType, WasmHeapType, WasmRefType, WasmSubType, WasmValType,
+    WasmCompositeType, WasmHeapType, WasmRefType, WasmSubType, WasmValType,
 };
 
 pub struct MatchCx<'a> {
@@ -115,17 +114,16 @@ fn concrete_type_mismatch(
     expected: &WasmSubType,
     actual: &WasmSubType,
 ) -> anyhow::Error {
-    let render_field = |ty: &WasmFieldType| {
-        if ty.mutable {
-            format!("(mut {})", ty.element_type)
-        } else {
-            ty.element_type.to_string()
-        }
-    };
-
     let render = |ty: &WasmSubType| match &ty.composite_type {
         WasmCompositeType::Array(ty) => {
-            format!("(array {})", render_field(&ty.0))
+            format!(
+                "(array {})",
+                if ty.0.mutable {
+                    format!("(mut {})", ty.0.element_type)
+                } else {
+                    ty.0.element_type.to_string()
+                }
+            )
         }
         WasmCompositeType::Func(ty) => {
             let params = if ty.params().is_empty() {
@@ -153,14 +151,6 @@ fn concrete_type_mismatch(
                 )
             };
             format!("(func{params}{returns})")
-        }
-        WasmCompositeType::Struct(ty) => {
-            let mut s = "(struct".to_string();
-            for f in ty.fields.iter() {
-                s.push_str(&format!(" {}", render_field(f)));
-            }
-            s.push(')');
-            s
         }
     };
 
@@ -236,9 +226,8 @@ fn match_heap(expected: WasmHeapType, actual: WasmHeapType, desc: &str) -> Resul
     let result = match (actual, expected) {
         // TODO: Wasm GC introduces subtyping between function types, so it will
         // no longer suffice to check whether canonicalized type IDs are equal.
-        (H::ConcreteArray(actual), H::ConcreteArray(expected)) => actual == expected,
         (H::ConcreteFunc(actual), H::ConcreteFunc(expected)) => actual == expected,
-        (H::ConcreteStruct(actual), H::ConcreteStruct(expected)) => actual == expected,
+        (H::ConcreteArray(actual), H::ConcreteArray(expected)) => actual == expected,
 
         (H::NoFunc, H::NoFunc) => true,
         (_, H::NoFunc) => false,
@@ -249,36 +238,11 @@ fn match_heap(expected: WasmHeapType, actual: WasmHeapType, desc: &str) -> Resul
         (H::NoFunc | H::ConcreteFunc(_) | H::Func, H::Func) => true,
         (_, H::Func) => false,
 
-        (H::Extern | H::NoExtern, H::Extern) => true,
+        (H::Extern, H::Extern) => true,
         (_, H::Extern) => false,
 
-        (H::NoExtern, H::NoExtern) => true,
-        (_, H::NoExtern) => false,
-
-        (
-            H::Any
-            | H::Eq
-            | H::I31
-            | H::Array
-            | H::ConcreteArray(_)
-            | H::Struct
-            | H::ConcreteStruct(_)
-            | H::None,
-            H::Any,
-        ) => true,
+        (H::Any | H::I31 | H::Array | H::ConcreteArray(_) | H::None, H::Any) => true,
         (_, H::Any) => false,
-
-        (
-            H::Eq
-            | H::I31
-            | H::Array
-            | H::ConcreteArray(_)
-            | H::Struct
-            | H::ConcreteStruct(_)
-            | H::None,
-            H::Eq,
-        ) => true,
-        (_, H::Eq) => false,
 
         (H::I31 | H::None, H::I31) => true,
         (_, H::I31) => false,
@@ -288,12 +252,6 @@ fn match_heap(expected: WasmHeapType, actual: WasmHeapType, desc: &str) -> Resul
 
         (H::None, H::ConcreteArray(_)) => true,
         (_, H::ConcreteArray(_)) => false,
-
-        (H::Struct | H::ConcreteStruct(_) | H::None, H::Struct) => true,
-        (_, H::Struct) => false,
-
-        (H::None, H::ConcreteStruct(_)) => true,
-        (_, H::ConcreteStruct(_)) => false,
 
         (H::None, H::None) => true,
         (_, H::None) => false,

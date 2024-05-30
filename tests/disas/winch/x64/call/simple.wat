@@ -14,7 +14,7 @@
     (local.get 1)
     (i32.mul))
 )
-;; wasm[0]::function[0]::main:
+;; wasm[0]::function[0]:
 ;;       pushq   %rbp
 ;;       movq    %rsp, %rbp
 ;;       movq    8(%rdi), %r11
@@ -53,7 +53,7 @@
 ;;       retq
 ;;   8b: ud2
 ;;
-;; wasm[0]::function[1]::product:
+;; wasm[0]::function[1]:
 ;;       pushq   %rbp
 ;;       movq    %rsp, %rbp
 ;;       movq    8(%rdi), %r11

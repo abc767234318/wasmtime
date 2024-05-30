@@ -1,9 +1,9 @@
 use crate::{EntityRef, Module, ModuleTypes, TypeConvert};
-use std::{borrow::Cow, collections::HashMap, ops::Index};
+use std::{collections::HashMap, ops::Index};
 use wasmparser::{UnpackedIndex, Validator, ValidatorId};
 use wasmtime_types::{
     EngineOrModuleTypeIndex, ModuleInternedRecGroupIndex, ModuleInternedTypeIndex, TypeIndex,
-    WasmCompositeType, WasmFuncType, WasmHeapType, WasmResult, WasmSubType,
+    WasmCompositeType, WasmHeapType, WasmResult, WasmSubType,
 };
 
 /// A type marking the start of a recursion group's definition.
@@ -31,12 +31,6 @@ pub struct ModuleTypesBuilder {
     /// The canonicalized and deduplicated set of types we are building.
     types: ModuleTypes,
 
-    /// The set of trampoline-compatible function types we have already added to
-    /// `self.types`. We do this additional level of deduping, on top of what
-    /// `wasmparser` already does, so we can quickly and easily get the
-    /// trampoline type for a given function type if we've already interned one.
-    trampoline_types: HashMap<WasmFuncType, ModuleInternedTypeIndex>,
-
     /// A map from already-interned `wasmparser` types to their corresponding
     /// Wasmtime type.
     wasmparser_to_wasmtime: HashMap<wasmparser::types::CoreTypeId, ModuleInternedTypeIndex>,
@@ -55,7 +49,6 @@ impl ModuleTypesBuilder {
         Self {
             validator_id: validator.id(),
             types: ModuleTypes::default(),
-            trampoline_types: HashMap::default(),
             wasmparser_to_wasmtime: HashMap::default(),
             already_seen: HashMap::default(),
             defining_rec_group: None,
@@ -113,69 +106,11 @@ impl ModuleTypesBuilder {
             let ty = &validator_types[id];
             let wasm_ty = WasmparserTypeConverter::new(self, module)
                 .with_rec_group(validator_types, rec_group_id)
-                .convert_sub_type(ty);
+                .convert_sub_type(ty)?;
             self.wasm_sub_type_in_rec_group(id, wasm_ty);
         }
 
-        let rec_group_index = self.end_rec_group(rec_group_id);
-
-        // Iterate over all the types we just defined and make sure that every
-        // function type has an associated trampoline type. This needs to happen
-        // *after* we finish defining the rec group because we may need to
-        // intern new function types, which would conflict with the contiguous
-        // range of type indices we pre-reserved for the rec group elements.
-        for ty in self.rec_group_elements(rec_group_index) {
-            if self.types[ty].is_func() {
-                let trampoline = self.intern_trampoline_type(ty);
-                self.types.set_trampoline_type(ty, trampoline);
-            }
-        }
-
-        Ok(rec_group_index)
-    }
-
-    /// Get or create the trampoline function type for the given function
-    /// type. Returns the interned type index of the trampoline function type.
-    fn intern_trampoline_type(
-        &mut self,
-        for_func_ty: ModuleInternedTypeIndex,
-    ) -> ModuleInternedTypeIndex {
-        let trampoline = self.types[for_func_ty].unwrap_func().trampoline_type();
-
-        if let Some(idx) = self.trampoline_types.get(&trampoline) {
-            // We've already interned this trampoline type; reuse it.
-            *idx
-        } else {
-            // We have not already interned this trampoline type.
-            match trampoline {
-                // The trampoline type is the same as the original function
-                // type. We can reuse the definition and its index, but still
-                // need to intern the type into our `trampoline_types` map so we
-                // can reuse it in the future.
-                Cow::Borrowed(f) => {
-                    self.trampoline_types.insert(f.clone(), for_func_ty);
-                    for_func_ty
-                }
-                // The trampoline type is different from the original function
-                // type. Define the trampoline type and then intern it in
-                // `trampoline_types` so we can reuse it in the future.
-                Cow::Owned(f) => {
-                    let idx = self.types.push(WasmSubType {
-                        is_final: true,
-                        supertype: None,
-                        composite_type: WasmCompositeType::Func(f.clone()),
-                    });
-
-                    // The trampoline type is its own trampoline type.
-                    self.types.set_trampoline_type(idx, idx);
-
-                    let next = self.types.next_ty();
-                    self.types.push_rec_group(idx..next);
-                    self.trampoline_types.insert(f, idx);
-                    idx
-                }
-            }
-        }
+        Ok(self.end_rec_group(rec_group_id))
     }
 
     /// Start defining a recursion group.
@@ -313,19 +248,6 @@ impl ModuleTypesBuilder {
     pub fn wasm_types(&self) -> impl Iterator<Item = (ModuleInternedTypeIndex, &WasmSubType)> {
         self.types.wasm_types()
     }
-
-    /// Get an iterator over all function types and their associated trampoline
-    /// type.
-    pub fn trampoline_types(
-        &self,
-    ) -> impl Iterator<Item = (ModuleInternedTypeIndex, ModuleInternedTypeIndex)> + '_ {
-        self.types.trampoline_types()
-    }
-
-    /// Get the associated trampoline type for the given function type.
-    pub fn trampoline_type(&self, ty: ModuleInternedTypeIndex) -> ModuleInternedTypeIndex {
-        self.types.trampoline_type(ty)
-    }
 }
 
 // Forward the indexing impl to the internal `ModuleTypes`
@@ -389,13 +311,12 @@ impl TypeConvert for WasmparserTypeConverter<'_> {
                     match &ty.composite_type {
                         WasmCompositeType::Array(_) => WasmHeapType::ConcreteArray(index),
                         WasmCompositeType::Func(_) => WasmHeapType::ConcreteFunc(index),
-                        WasmCompositeType::Struct(_) => WasmHeapType::ConcreteStruct(index),
                     }
                 } else if let Some((wasmparser_types, _)) = self.rec_group_context.as_ref() {
                     match &wasmparser_types[id].composite_type {
                         wasmparser::CompositeType::Array(_) => WasmHeapType::ConcreteArray(index),
                         wasmparser::CompositeType::Func(_) => WasmHeapType::ConcreteFunc(index),
-                        wasmparser::CompositeType::Struct(_) => WasmHeapType::ConcreteStruct(index),
+                        wasmparser::CompositeType::Struct(_) => unreachable!(),
                     }
                 } else {
                     panic!("forward reference to type outside of rec group?")
@@ -416,7 +337,6 @@ impl TypeConvert for WasmparserTypeConverter<'_> {
                     match &ty.composite_type {
                         WasmCompositeType::Array(_) => WasmHeapType::ConcreteArray(index),
                         WasmCompositeType::Func(_) => WasmHeapType::ConcreteFunc(index),
-                        WasmCompositeType::Struct(_) => WasmHeapType::ConcreteStruct(index),
                     }
                 } else if let Some((parser_types, rec_group)) = self.rec_group_context.as_ref() {
                     let rec_group_index = interned.index() - self.types.types.len_types();
@@ -427,28 +347,13 @@ impl TypeConvert for WasmparserTypeConverter<'_> {
                     match &parser_types[id].composite_type {
                         wasmparser::CompositeType::Array(_) => WasmHeapType::ConcreteArray(index),
                         wasmparser::CompositeType::Func(_) => WasmHeapType::ConcreteFunc(index),
-                        wasmparser::CompositeType::Struct(_) => WasmHeapType::ConcreteStruct(index),
+                        wasmparser::CompositeType::Struct(_) => unreachable!(),
                     }
                 } else {
                     panic!("forward reference to type outside of rec group?")
                 }
             }
 
-            UnpackedIndex::RecGroup(_) => unreachable!(),
-        }
-    }
-
-    fn lookup_type_index(&self, index: wasmparser::UnpackedIndex) -> EngineOrModuleTypeIndex {
-        match index {
-            UnpackedIndex::Id(id) => {
-                let interned = self.types.wasmparser_to_wasmtime[&id];
-                EngineOrModuleTypeIndex::Module(interned)
-            }
-            UnpackedIndex::Module(module_index) => {
-                let module_index = TypeIndex::from_u32(module_index);
-                let interned = self.module.types[module_index];
-                EngineOrModuleTypeIndex::Module(interned)
-            }
             UnpackedIndex::RecGroup(_) => unreachable!(),
         }
     }

@@ -14,7 +14,7 @@ use std::string::String;
 
 pub use crate::isa::x64::lower::isle::generated_code::DivSignedness;
 
-/// An extension trait for converting `Writable{Xmm,Gpr}` to `Writable<Reg>`.
+/// An extenstion trait for converting `Writable{Xmm,Gpr}` to `Writable<Reg>`.
 pub trait ToWritableReg {
     /// Convert `Writable{Xmm,Gpr}` to `Writable<Reg>`.
     fn to_writable_reg(&self) -> Writable<Reg>;
@@ -170,8 +170,8 @@ macro_rules! newtype_of_reg {
                 }
             }
             impl PrettyPrint for $newtype_reg_mem {
-                fn pretty_print(&self, size: u8) -> String {
-                    self.0.pretty_print(size)
+                fn pretty_print(&self, size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
+                    self.0.pretty_print(size, allocs)
                 }
             }
         )*
@@ -236,8 +236,8 @@ macro_rules! newtype_of_reg {
             }
 
             impl PrettyPrint for $newtype_reg_mem_imm {
-                fn pretty_print(&self, size: u8) -> String {
-                    self.0.pretty_print(size)
+                fn pretty_print(&self, size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
+                    self.0.pretty_print(size, allocs)
                 }
             }
         )*
@@ -407,6 +407,43 @@ impl Amode {
         }
     }
 
+    pub(crate) fn with_allocs(&self, allocs: &mut AllocationConsumer<'_>) -> Self {
+        // The order in which we consume allocs here must match the
+        // order in which we produce operands in get_operands() above.
+        match self {
+            &Amode::ImmReg {
+                simm32,
+                base,
+                flags,
+            } => {
+                let base = if base == regs::rsp() || base == regs::rbp() {
+                    base
+                } else {
+                    allocs.next(base)
+                };
+                Amode::ImmReg {
+                    simm32,
+                    flags,
+                    base,
+                }
+            }
+            &Amode::ImmRegRegShift {
+                simm32,
+                base,
+                index,
+                shift,
+                flags,
+            } => Amode::ImmRegRegShift {
+                simm32,
+                shift,
+                flags,
+                base: Gpr::new(allocs.next(*base)).unwrap(),
+                index: Gpr::new(allocs.next(*index)).unwrap(),
+            },
+            &Amode::RipRelative { target } => Amode::RipRelative { target },
+        }
+    }
+
     /// Offset the amode by a fixed offset.
     pub(crate) fn offset(&self, offset: i32) -> Self {
         let mut ret = self.clone();
@@ -424,12 +461,12 @@ impl Amode {
 }
 
 impl PrettyPrint for Amode {
-    fn pretty_print(&self, _size: u8) -> String {
+    fn pretty_print(&self, _size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
         match self {
             Amode::ImmReg { simm32, base, .. } => {
                 // Note: size is always 8; the address is 64 bits,
                 // even if the addressed operand is smaller.
-                format!("{}({})", *simm32, pretty_print_reg(*base, 8))
+                format!("{}({})", *simm32, pretty_print_reg(*base, 8, allocs))
             }
             Amode::ImmRegRegShift {
                 simm32,
@@ -440,8 +477,8 @@ impl PrettyPrint for Amode {
             } => format!(
                 "{}({},{},{})",
                 *simm32,
-                pretty_print_reg(base.to_reg(), 8),
-                pretty_print_reg(index.to_reg(), 8),
+                pretty_print_reg(base.to_reg(), 8, allocs),
+                pretty_print_reg(index.to_reg(), 8, allocs),
                 1 << shift
             ),
             Amode::RipRelative { ref target } => format!("label{}(%rip)", target.get()),
@@ -463,10 +500,10 @@ pub enum SyntheticAmode {
         offset: u32,
     },
 
-    /// A (virtual) offset to the slot area of the function frame, which lies just above the
-    /// outgoing arguments.
-    SlotOffset {
-        /// The offset into the slot area.
+    /// A (virtual) offset to the "nominal SP" value, which will be recomputed as we push and pop
+    /// within the function.
+    NominalSPOffset {
+        /// The nominal stack pointer value.
         simm32: i32,
     },
 
@@ -480,8 +517,8 @@ impl SyntheticAmode {
         Self::Real(amode)
     }
 
-    pub(crate) fn slot_offset(simm32: i32) -> Self {
-        SyntheticAmode::SlotOffset { simm32 }
+    pub(crate) fn nominal_sp_offset(simm32: i32) -> Self {
+        SyntheticAmode::NominalSPOffset { simm32 }
     }
 
     /// Add the registers mentioned by `self` to `collector`.
@@ -491,7 +528,7 @@ impl SyntheticAmode {
             SyntheticAmode::IncomingArg { .. } => {
                 // Nothing to do; the base is known and isn't involved in regalloc.
             }
-            SyntheticAmode::SlotOffset { .. } => {
+            SyntheticAmode::NominalSPOffset { .. } => {
                 // Nothing to do; the base is SP and isn't involved in regalloc.
             }
             SyntheticAmode::ConstantOffset(_) => {}
@@ -505,7 +542,7 @@ impl SyntheticAmode {
             SyntheticAmode::IncomingArg { .. } => {
                 // Nothing to do; the base is known and isn't involved in regalloc.
             }
-            SyntheticAmode::SlotOffset { .. } => {
+            SyntheticAmode::NominalSPOffset { .. } => {
                 // Nothing to do; the base is SP and isn't involved in regalloc.
             }
             SyntheticAmode::ConstantOffset(_) => {}
@@ -525,8 +562,8 @@ impl SyntheticAmode {
                     regs::rbp(),
                 )
             }
-            SyntheticAmode::SlotOffset { simm32 } => {
-                let off = *simm32 as i64 + i64::from(state.frame_layout().outgoing_args_size);
+            SyntheticAmode::NominalSPOffset { simm32 } => {
+                let off = *simm32 as i64 + state.virtual_sp_offset();
                 Amode::imm_reg(off.try_into().expect("invalid sp offset"), regs::rsp())
             }
             SyntheticAmode::ConstantOffset(c) => {
@@ -535,11 +572,20 @@ impl SyntheticAmode {
         }
     }
 
+    pub(crate) fn with_allocs(&self, allocs: &mut AllocationConsumer<'_>) -> Self {
+        match self {
+            SyntheticAmode::Real(addr) => SyntheticAmode::Real(addr.with_allocs(allocs)),
+            &SyntheticAmode::IncomingArg { .. }
+            | &SyntheticAmode::NominalSPOffset { .. }
+            | &SyntheticAmode::ConstantOffset { .. } => self.clone(),
+        }
+    }
+
     pub(crate) fn aligned(&self) -> bool {
         match self {
             SyntheticAmode::Real(addr) => addr.aligned(),
             &SyntheticAmode::IncomingArg { .. }
-            | SyntheticAmode::SlotOffset { .. }
+            | SyntheticAmode::NominalSPOffset { .. }
             | SyntheticAmode::ConstantOffset { .. } => true,
         }
     }
@@ -558,14 +604,14 @@ impl Into<SyntheticAmode> for VCodeConstant {
 }
 
 impl PrettyPrint for SyntheticAmode {
-    fn pretty_print(&self, _size: u8) -> String {
+    fn pretty_print(&self, _size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
         match self {
             // See note in `Amode` regarding constant size of `8`.
-            SyntheticAmode::Real(addr) => addr.pretty_print(8),
+            SyntheticAmode::Real(addr) => addr.pretty_print(8, allocs),
             &SyntheticAmode::IncomingArg { offset } => {
                 format!("rbp(stack args max - {offset})")
             }
-            SyntheticAmode::SlotOffset { simm32 } => {
+            SyntheticAmode::NominalSPOffset { simm32 } => {
                 format!("rsp({} + virtual offset)", *simm32)
             }
             SyntheticAmode::ConstantOffset(c) => format!("const({})", c.as_u32()),
@@ -628,6 +674,18 @@ impl RegMemImm {
             Self::Imm { .. } => {}
         }
     }
+
+    pub(crate) fn with_allocs(&self, allocs: &mut AllocationConsumer<'_>) -> Self {
+        match self {
+            Self::Reg { reg } => Self::Reg {
+                reg: allocs.next(*reg),
+            },
+            Self::Mem { addr } => Self::Mem {
+                addr: addr.with_allocs(allocs),
+            },
+            Self::Imm { .. } => self.clone(),
+        }
+    }
 }
 
 impl From<RegMem> for RegMemImm {
@@ -646,10 +704,10 @@ impl From<Reg> for RegMemImm {
 }
 
 impl PrettyPrint for RegMemImm {
-    fn pretty_print(&self, size: u8) -> String {
+    fn pretty_print(&self, size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
         match self {
-            Self::Reg { reg } => pretty_print_reg(*reg, size),
-            Self::Mem { addr } => addr.pretty_print(size),
+            Self::Reg { reg } => pretty_print_reg(*reg, size, allocs),
+            Self::Mem { addr } => addr.pretty_print(size, allocs),
             Self::Imm { simm32 } => format!("${}", *simm32 as i32),
         }
     }
@@ -722,6 +780,17 @@ impl RegMem {
             RegMem::Mem { addr, .. } => addr.get_operands(collector),
         }
     }
+
+    pub(crate) fn with_allocs(&self, allocs: &mut AllocationConsumer<'_>) -> Self {
+        match self {
+            RegMem::Reg { reg } => RegMem::Reg {
+                reg: allocs.next(*reg),
+            },
+            RegMem::Mem { addr } => RegMem::Mem {
+                addr: addr.with_allocs(allocs),
+            },
+        }
+    }
 }
 
 impl From<Reg> for RegMem {
@@ -737,10 +806,10 @@ impl From<Writable<Reg>> for RegMem {
 }
 
 impl PrettyPrint for RegMem {
-    fn pretty_print(&self, size: u8) -> String {
+    fn pretty_print(&self, size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
         match self {
-            RegMem::Reg { reg } => pretty_print_reg(*reg, size),
-            RegMem::Mem { addr, .. } => addr.pretty_print(size),
+            RegMem::Reg { reg } => pretty_print_reg(*reg, size, allocs),
+            RegMem::Mem { addr, .. } => addr.pretty_print(size, allocs),
         }
     }
 }
@@ -2150,7 +2219,7 @@ impl From<FloatCC> for FcmpImm {
 /// (i.e. the rounding mode) which only take up the first two bits when encoded.
 /// However the rounding immediate which this field helps make up, also includes
 /// bits 3 and 4 which define the rounding select and precision mask respectively.
-/// These two bits are not defined here and are implicitly set to zero when encoded.
+/// These two bits are not defined here and are implictly set to zero when encoded.
 #[derive(Clone, Copy)]
 pub enum RoundImm {
     /// Round to nearest mode.

@@ -1,4 +1,3 @@
-use crate::prelude::*;
 #[allow(unused)]
 use anyhow::{bail, Result};
 
@@ -18,7 +17,7 @@ cfg_if::cfg_if! {
 }
 
 cfg_if::cfg_if! {
-    if #[cfg(all(unix, feature = "std"))] {
+    if #[cfg(unix)] {
         mod perfmap;
         pub use perfmap::new as new_perfmap;
     } else {

@@ -8,7 +8,7 @@
     local.get 0
     f64.load))
 
-;; function u0:0(i64 vmctx, i64, i32) -> f64 tail {
+;; function u0:0(i64 vmctx, i64, i32) -> f64 fast {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1

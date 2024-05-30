@@ -22,9 +22,9 @@ use wasmtime::component::Resource;
 /// In practice, datagrams are typically less than 1500 bytes.
 const MAX_UDP_DATAGRAM_SIZE: usize = u16::MAX as usize;
 
-impl udp::Host for dyn WasiView + '_ {}
+impl<T: WasiView> udp::Host for T {}
 
-impl udp::HostUdpSocket for dyn WasiView + '_ {
+impl<T: WasiView> udp::HostUdpSocket for T {
     fn start_bind(
         &mut self,
         this: Resource<udp::UdpSocket>,
@@ -300,7 +300,7 @@ impl udp::HostUdpSocket for dyn WasiView + '_ {
     }
 }
 
-impl udp::HostIncomingDatagramStream for dyn WasiView + '_ {
+impl<T: WasiView> udp::HostIncomingDatagramStream for T {
     fn receive(
         &mut self,
         this: Resource<udp::IncomingDatagramStream>,
@@ -391,7 +391,7 @@ impl Subscribe for IncomingDatagramStream {
     }
 }
 
-impl udp::HostOutgoingDatagramStream for dyn WasiView + '_ {
+impl<T: WasiView> udp::HostOutgoingDatagramStream for T {
     fn check_send(&mut self, this: Resource<udp::OutgoingDatagramStream>) -> SocketResult<u64> {
         let table = self.table();
         let stream = table.get_mut(&this)?;

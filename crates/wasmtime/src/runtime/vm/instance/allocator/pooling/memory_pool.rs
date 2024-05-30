@@ -54,7 +54,6 @@ use super::{
     index_allocator::{MemoryInModule, ModuleAffinityIndexAllocator, SlotId},
     MemoryAllocationIndex,
 };
-use crate::prelude::*;
 use crate::runtime::vm::mpk::{self, ProtectionKey, ProtectionMask};
 use crate::runtime::vm::{
     CompiledModuleId, InstanceAllocationRequest, InstanceLimits, Memory, MemoryImageSlot, Mmap,
@@ -109,49 +108,43 @@ pub struct MemoryPool {
     /// will contain one stripe per available key; otherwise, a single stripe
     /// with an empty key.
     stripes: Vec<Stripe>,
-
-    /// If using a copy-on-write allocation scheme, the slot management. We
-    /// dynamically transfer ownership of a slot to a Memory when in use.
+    // If using a copy-on-write allocation scheme, the slot management. We
+    // dynamically transfer ownership of a slot to a Memory when in
+    // use.
     image_slots: Vec<Mutex<Option<MemoryImageSlot>>>,
-
     /// A description of the various memory sizes used in allocating the
     /// `mapping` slab.
     layout: SlabLayout,
-
-    /// The maximum number of memories that a single core module instance may
-    /// use.
-    ///
-    /// NB: this is needed for validation but does not affect the pool's size.
+    // The maximum number of memories that a single core module instance may
+    // use.
+    //
+    // NB: this is needed for validation but does not affect the pool's size.
     memories_per_instance: usize,
-
-    /// How much linear memory, in bytes, to keep resident after resetting for
-    /// use with the next instance. This much memory will be `memset` to zero
-    /// when a linear memory is deallocated.
-    ///
-    /// Memory exceeding this amount in the wasm linear memory will be released
-    /// with `madvise` back to the kernel.
-    ///
-    /// Only applicable on Linux.
-    pub(super) keep_resident: usize,
-
-    /// Keep track of protection keys handed out to initialized stores; this
-    /// allows us to round-robin the assignment of stores to stripes.
+    // How much linear memory, in bytes, to keep resident after resetting for
+    // use with the next instance. This much memory will be `memset` to zero
+    // when a linear memory is deallocated.
+    //
+    // Memory exceeding this amount in the wasm linear memory will be released
+    // with `madvise` back to the kernel.
+    //
+    // Only applicable on Linux.
+    keep_resident: usize,
+    // Keep track of protection keys handed out to initialized stores; this
+    // allows us to round-robin the assignment of stores to stripes.
     next_available_pkey: AtomicUsize,
 }
 
 impl MemoryPool {
     /// Create a new `MemoryPool`.
     pub fn new(config: &PoolingInstanceAllocatorConfig, tunables: &Tunables) -> Result<Self> {
-        if u64::try_from(config.limits.max_memory_size).unwrap()
-            > tunables.static_memory_reservation
-        {
+        // The maximum module memory page count cannot exceed 65536 pages
+        if config.limits.memory_pages > 0x10000 {
             bail!(
-                "maximum memory size of {:#x} bytes exceeds the configured \
-                 static memory reservation of {:#x} bytes",
-                config.limits.max_memory_size,
-                tunables.static_memory_reservation
+                "module memory page limit of {} exceeds the maximum of 65536",
+                config.limits.memory_pages
             );
         }
+
         let pkeys = match config.memory_protection_keys {
             MpkEnabled::Auto => {
                 if mpk::is_supported() {
@@ -276,13 +269,11 @@ impl MemoryPool {
             .skip(module.num_imported_memories)
         {
             match plan.style {
-                MemoryStyle::Static { byte_reservation } => {
-                    if u64::try_from(self.layout.bytes_to_next_stripe_slot()).unwrap()
-                        < byte_reservation
-                    {
+                MemoryStyle::Static { bound } => {
+                    if self.layout.pages_to_next_stripe_slot() < bound {
                         bail!(
                             "memory size allocated per-memory is too small to \
-                             satisfy static bound of {byte_reservation:#x} bytes"
+                             satisfy static bound of {bound:#x} pages"
                         );
                     }
                 }
@@ -301,7 +292,6 @@ impl MemoryPool {
     }
 
     /// Are zero slots in use right now?
-    #[allow(unused)] // some cfgs don't use this
     pub fn is_empty(&self) -> bool {
         self.stripes.iter().all(|s| s.allocator.is_empty())
     }
@@ -330,9 +320,10 @@ impl MemoryPool {
             )
             .map(|slot| StripedAllocationIndex(u32::try_from(slot.index()).unwrap()))
             .ok_or_else(|| {
-                super::PoolConcurrencyLimitError::new(
+                anyhow!(
+                    "maximum concurrent memory limit of {} reached for stripe {}",
                     self.stripes[stripe_index].allocator.len(),
-                    format!("memory stripe {stripe_index}"),
+                    stripe_index
                 )
             })?;
         let allocation_index =
@@ -344,11 +335,8 @@ impl MemoryPool {
             // should be returned as an error through `validate_memory_plans`
             // but double-check here to be sure.
             match memory_plan.style {
-                MemoryStyle::Static { byte_reservation } => {
-                    assert!(
-                        byte_reservation
-                            <= u64::try_from(self.layout.bytes_to_next_stripe_slot()).unwrap()
-                    );
+                MemoryStyle::Static { bound } => {
+                    assert!(bound <= self.layout.pages_to_next_stripe_slot());
                 }
                 MemoryStyle::Dynamic { .. } => {}
             }
@@ -401,15 +389,16 @@ impl MemoryPool {
     /// The memory must have been previously allocated from this pool and
     /// assigned the given index, must currently be in an allocated state, and
     /// must never be used again.
-    ///
-    /// The caller must have already called `clear_and_remain_ready` on the
-    /// memory's image and flushed any enqueued decommits for this memory.
-    pub unsafe fn deallocate(
-        &self,
-        allocation_index: MemoryAllocationIndex,
-        image: MemoryImageSlot,
-    ) {
-        self.return_memory_image_slot(allocation_index, image);
+    pub unsafe fn deallocate(&self, allocation_index: MemoryAllocationIndex, memory: Memory) {
+        let mut image = memory.unwrap_static_image();
+
+        // Reset the image slot. If there is any error clearing the
+        // image, just drop it here, and let the drop handler for the
+        // slot unmap in a way that retains the address space
+        // reservation.
+        if image.clear_and_remain_ready(self.keep_resident).is_ok() {
+            self.return_memory_image_slot(allocation_index, image);
+        }
 
         let (stripe_index, striped_allocation_index) =
             StripedAllocationIndex::from_unstriped_slot_index(allocation_index, self.stripes.len());
@@ -555,6 +544,9 @@ impl SlabConstraints {
         tunables: &Tunables,
         num_pkeys_available: usize,
     ) -> Result<Self> {
+        // The maximum size a memory can grow to in this pool.
+        let max_memory_bytes = limits.memory_pages * u64::from(WASM_PAGE_SIZE);
+
         // `static_memory_bound` is the configured number of Wasm pages for a
         // static memory slot (see `Config::static_memory_maximum_size`); even
         // if the memory never grows to this size (e.g., it has a lower memory
@@ -563,10 +555,12 @@ impl SlabConstraints {
         // most bounds checks. `MemoryPool` must respect this bound, though not
         // explicitly: if we can achieve the same effect via MPK-protected
         // stripes, the slot size can be lower than the `static_memory_bound`.
-        let expected_slot_bytes = tunables.static_memory_reservation;
+        let expected_slot_bytes = tunables.static_memory_bound * u64::from(WASM_PAGE_SIZE);
 
         let constraints = SlabConstraints {
-            max_memory_bytes: limits.max_memory_size,
+            max_memory_bytes: max_memory_bytes
+                .try_into()
+                .context("max memory is too large")?,
             num_slots: limits
                 .total_memories
                 .try_into()
@@ -646,6 +640,13 @@ impl SlabLayout {
     /// ```
     fn bytes_to_next_stripe_slot(&self) -> usize {
         self.slot_bytes * self.num_stripes
+    }
+
+    /// Same as `bytes_to_next_stripe_slot` but in Wasm pages.
+    fn pages_to_next_stripe_slot(&self) -> u64 {
+        let bytes = self.bytes_to_next_stripe_slot();
+        let pages = bytes / WASM_PAGE_SIZE as usize;
+        u64::try_from(pages).unwrap()
     }
 }
 
@@ -751,6 +752,7 @@ fn calculate(constraints: &SlabConstraints) -> Result<SlabLayout> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::vm::PoolingInstanceAllocator;
     use proptest::prelude::*;
 
     #[cfg(target_pointer_width = "64")]
@@ -763,13 +765,13 @@ mod tests {
                     max_tables_per_module: 0,
                     max_memories_per_module: 3,
                     table_elements: 0,
-                    max_memory_size: WASM_PAGE_SIZE as usize,
+                    memory_pages: 1,
                     ..Default::default()
                 },
                 ..Default::default()
             },
             &Tunables {
-                static_memory_reservation: WASM_PAGE_SIZE as u64,
+                static_memory_bound: 1,
                 static_memory_offset_guard_size: 0,
                 ..Tunables::default_host()
             },
@@ -788,6 +790,28 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn test_pooling_allocator_with_reservation_size_exceeded() {
+        let config = PoolingInstanceAllocatorConfig {
+            limits: InstanceLimits {
+                total_memories: 1,
+                memory_pages: 2,
+                ..Default::default()
+            },
+            ..PoolingInstanceAllocatorConfig::default()
+        };
+        let pool = PoolingInstanceAllocator::new(
+            &config,
+            &Tunables {
+                static_memory_bound: 1,
+                static_memory_offset_guard_size: 0,
+                ..Tunables::default_host()
+            },
+        )
+        .unwrap();
+        assert_eq!(pool.memories.layout.max_memory_bytes, 2 * 65536);
     }
 
     #[test]

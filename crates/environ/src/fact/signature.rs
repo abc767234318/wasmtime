@@ -2,7 +2,6 @@
 
 use crate::component::{ComponentTypesBuilder, InterfaceType, MAX_FLAT_PARAMS, MAX_FLAT_RESULTS};
 use crate::fact::{AdapterOptions, Context, Options};
-use crate::prelude::*;
 use wasm_encoder::ValType;
 
 /// Metadata about a core wasm signature which is created for a component model

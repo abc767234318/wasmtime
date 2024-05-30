@@ -1,10 +1,8 @@
 use crate::component::func::{desc, Lift, LiftContext, Lower, LowerContext};
 use crate::component::ResourceAny;
-use crate::prelude::*;
 use crate::ValRaw;
 use anyhow::{anyhow, bail, Result};
-use core::mem::MaybeUninit;
-use core::slice::{Iter, IterMut};
+use std::mem::MaybeUninit;
 use wasmtime_component_util::{DiscriminantSize, FlagsSize};
 use wasmtime_environ::component::{
     CanonicalAbiInfo, InterfaceType, TypeEnum, TypeFlags, TypeListIndex, TypeOption, TypeResult,
@@ -94,7 +92,7 @@ impl Val {
     pub(crate) fn lift(
         cx: &mut LiftContext<'_>,
         ty: InterfaceType,
-        src: &mut Iter<'_, ValRaw>,
+        src: &mut std::slice::Iter<'_, ValRaw>,
     ) -> Result<Val> {
         Ok(match ty {
             InterfaceType::Bool => Val::Bool(bool::lift(cx, ty, next(src))?),
@@ -328,7 +326,7 @@ impl Val {
         &self,
         cx: &mut LowerContext<'_, T>,
         ty: InterfaceType,
-        dst: &mut IterMut<'_, MaybeUninit<ValRaw>>,
+        dst: &mut std::slice::IterMut<'_, MaybeUninit<ValRaw>>,
     ) -> Result<()> {
         match (ty, self) {
             (InterfaceType::Bool, Val::Bool(value)) => value.lower(cx, ty, next_mut(dst)),
@@ -440,9 +438,7 @@ impl Val {
         ty: InterfaceType,
         offset: usize,
     ) -> Result<()> {
-        debug_assert!(
-            offset % usize::try_from(cx.types.canonical_abi(&ty).align32).err2anyhow()? == 0
-        );
+        debug_assert!(offset % usize::try_from(cx.types.canonical_abi(&ty).align32)? == 0);
 
         match (ty, self) {
             (InterfaceType::Bool, Val::Bool(value)) => value.store(cx, ty, offset),
@@ -762,7 +758,7 @@ impl GenericVariant<'_> {
     fn lower<T>(
         &self,
         cx: &mut LowerContext<'_, T>,
-        dst: &mut IterMut<'_, MaybeUninit<ValRaw>>,
+        dst: &mut std::slice::IterMut<'_, MaybeUninit<ValRaw>>,
     ) -> Result<()> {
         next_mut(dst).write(ValRaw::u32(self.discriminant));
 
@@ -820,7 +816,7 @@ fn load_list(cx: &mut LiftContext<'_>, ty: TypeListIndex, ptr: usize, len: usize
         Some(n) if n <= cx.memory().len() => {}
         _ => bail!("list pointer/length out of bounds of memory"),
     }
-    if ptr % usize::try_from(element_alignment).err2anyhow()? != 0 {
+    if ptr % usize::try_from(element_alignment)? != 0 {
         bail!("list pointer is not aligned")
     }
 
@@ -875,7 +871,7 @@ fn lift_variant(
     cx: &mut LiftContext<'_>,
     flatten_count: usize,
     mut types: impl ExactSizeIterator<Item = Option<InterfaceType>>,
-    src: &mut Iter<'_, ValRaw>,
+    src: &mut std::slice::Iter<'_, ValRaw>,
 ) -> Result<(u32, Option<Box<Val>>)> {
     let len = types.len();
     let discriminant = next(src).get_u32();
@@ -902,7 +898,7 @@ fn lower_list<T>(
     items: &[Val],
 ) -> Result<(usize, usize)> {
     let abi = cx.types.canonical_abi(&element_type);
-    let elt_size = usize::try_from(abi.size32).err2anyhow()?;
+    let elt_size = usize::try_from(abi.size32)?;
     let elt_align = abi.align32;
     let size = items
         .len()
@@ -962,11 +958,13 @@ fn get_variant_discriminant<'a>(
     Ok((i as u32, ty))
 }
 
-fn next<'a>(src: &mut Iter<'a, ValRaw>) -> &'a ValRaw {
+fn next<'a>(src: &mut std::slice::Iter<'a, ValRaw>) -> &'a ValRaw {
     src.next().unwrap()
 }
 
-fn next_mut<'a>(dst: &mut IterMut<'a, MaybeUninit<ValRaw>>) -> &'a mut MaybeUninit<ValRaw> {
+fn next_mut<'a>(
+    dst: &mut std::slice::IterMut<'a, MaybeUninit<ValRaw>>,
+) -> &'a mut MaybeUninit<ValRaw> {
     dst.next().unwrap()
 }
 

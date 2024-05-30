@@ -14,13 +14,14 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ['std'] }
 postcard = { workspace = true }
 cpp_demangle = { version = "0.4.3", optional = true }
 cranelift-entity = { workspace = true }
-wasmtime-types = { workspace = true }
-wasmparser = { workspace = true, features = ['validate', 'serde'] }
+wasmtime-types = { workspace = true, features = ['std'] }
+wasmparser = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 log = { workspace = true }
@@ -39,25 +40,16 @@ wat = { workspace = true }
 
 [[example]]
 name = "factc"
-required-features = ['component-model', 'compile']
+required-features = ['component-model']
 
 [features]
-component-model = ["dep:wasmtime-component-util"]
-demangle = ['std', 'dep:rustc-demangle', 'dep:cpp_demangle']
-gc = []
-compile = [
-  'gimli/write',
-  'object/write_core',
-  'std',
+component-model = [
   "dep:wasm-encoder",
   "dep:wasmprinter",
+  "dep:wasmtime-component-util",
 ]
-threads = ['std']
-wmemcheck = ['std']
-std = [
-  'wasmtime-types/std',
-  'anyhow/std',
-  'object/std',
-  'wasmparser/std',
-  'indexmap/std',
-]
+demangle = ['dep:rustc-demangle', 'dep:cpp_demangle']
+gc = []
+compile = ['gimli/write', 'object/write_core']
+threads = []
+wmemcheck = []

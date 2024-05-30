@@ -1,13 +1,12 @@
 use crate::component::func::HostFunc;
 use crate::component::linker::{Definition, NameMap, Strings};
 use crate::component::ResourceType;
-use crate::prelude::*;
 use crate::runtime::vm::component::ComponentInstance;
 use crate::types::matching;
 use crate::Module;
-use alloc::sync::Arc;
 use anyhow::{anyhow, bail, Context, Result};
-use core::any::Any;
+use std::any::Any;
+use std::sync::Arc;
 use wasmtime_environ::component::{
     ComponentTypes, ResourceIndex, TypeComponentInstance, TypeDef, TypeFuncIndex, TypeModule,
     TypeResourceTableIndex,
@@ -205,7 +204,7 @@ impl<'a> InstanceType<'a> {
 /// Small helper method to downcast an `Arc` borrow into a borrow of a concrete
 /// type within the `Arc`.
 ///
-/// Note that this is different than `downcast_ref` which projects out `&T`
+/// Note that this is differnet than `downcast_ref` which projects out `&T`
 /// where here we want `&Arc<T>`.
 fn downcast_arc_ref<T: 'static>(arc: &Arc<dyn Any + Send + Sync>) -> &Arc<T> {
     // First assert that the payload of the `Any` is indeed a `T`

@@ -11,7 +11,6 @@
 
 #![deny(missing_docs)]
 
-use crate::prelude::*;
 use crate::runtime::vm::{SendSyncPtr, WaitResult};
 use std::collections::BTreeMap;
 use std::ptr::NonNull;
@@ -305,7 +304,6 @@ impl Spot {
 #[cfg(test)]
 mod tests {
     use super::{ParkingSpot, Waiter};
-    use crate::prelude::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};

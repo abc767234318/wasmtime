@@ -1,7 +1,8 @@
-use super::CallThreadState;
-use crate::prelude::*;
-use crate::runtime::vm::{Backtrace, VMRuntimeLimits};
 use wasm_encoder::CoreDumpValue;
+
+use crate::runtime::vm::{Backtrace, VMRuntimeLimits};
+
+use super::CallThreadState;
 
 /// A WebAssembly Coredump
 #[derive(Debug)]

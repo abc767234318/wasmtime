@@ -1,5 +1,4 @@
 use crate::obj::ELF_WASMTIME_TRAPS;
-use crate::prelude::*;
 use crate::TrapInformation;
 use object::write::{Object, StandardSegment};
 use object::{LittleEndian, SectionKind, U32Bytes};

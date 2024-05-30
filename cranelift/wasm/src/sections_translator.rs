@@ -20,8 +20,8 @@ use std::vec::Vec;
 use wasmparser::{
     Data, DataKind, DataSectionReader, Element, ElementItems, ElementKind, ElementSectionReader,
     Export, ExportSectionReader, ExternalKind, FunctionSectionReader, GlobalSectionReader,
-    ImportSectionReader, MemorySectionReader, MemoryType, Operator, TableSectionReader,
-    TagSectionReader, TagType, TypeRef, TypeSectionReader,
+    ImportSectionReader, MemorySectionReader, MemoryType, NameSectionReader, Naming, Operator,
+    TableSectionReader, TagSectionReader, TagType, TypeRef, TypeSectionReader,
 };
 use wasmtime_types::ConstExpr;
 
@@ -85,7 +85,7 @@ pub fn parse_import_section<'data>(
                 environ.declare_global_import(ty, import.module, import.name)?;
             }
             TypeRef::Table(ty) => {
-                let ty = environ.convert_table_type(&ty)?;
+                let ty = environ.convert_table_type(&ty);
                 environ.declare_table_import(ty, import.module, import.name)?;
             }
         }
@@ -124,7 +124,7 @@ pub fn parse_table_section(
     environ.reserve_tables(tables.count())?;
 
     for entry in tables {
-        let ty = environ.convert_table_type(&entry?.ty)?;
+        let ty = environ.convert_table_type(&entry?.ty);
         environ.declare_table(ty)?;
     }
 
@@ -339,5 +339,51 @@ pub fn parse_data_section<'data>(
         }
     }
 
+    Ok(())
+}
+
+/// Parses the Name section of the wasm module.
+pub fn parse_name_section<'data>(
+    names: NameSectionReader<'data>,
+    environ: &mut dyn ModuleEnvironment<'data>,
+) -> WasmResult<()> {
+    for subsection in names {
+        match subsection? {
+            wasmparser::Name::Function(names) => {
+                for name in names {
+                    let Naming { index, name } = name?;
+                    // We reserve `u32::MAX` for our own use in cranelift-entity.
+                    if index != u32::max_value() {
+                        environ.declare_func_name(FuncIndex::from_u32(index), name);
+                    }
+                }
+            }
+            wasmparser::Name::Module { name, .. } => {
+                environ.declare_module_name(name);
+            }
+            wasmparser::Name::Local(reader) => {
+                for f in reader {
+                    let f = f?;
+                    if f.index == u32::max_value() {
+                        continue;
+                    }
+                    for name in f.names {
+                        let Naming { index, name } = name?;
+                        environ.declare_local_name(FuncIndex::from_u32(f.index), index, name)
+                    }
+                }
+            }
+            wasmparser::Name::Label(_)
+            | wasmparser::Name::Type(_)
+            | wasmparser::Name::Table(_)
+            | wasmparser::Name::Global(_)
+            | wasmparser::Name::Memory(_)
+            | wasmparser::Name::Element(_)
+            | wasmparser::Name::Data(_)
+            | wasmparser::Name::Tag(_)
+            | wasmparser::Name::Field(_)
+            | wasmparser::Name::Unknown { .. } => {}
+        }
+    }
     Ok(())
 }

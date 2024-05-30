@@ -1,16 +1,16 @@
-use super::invoke_wasm_and_catch_traps;
-use crate::runtime::vm::{VMFuncRef, VMOpaqueContext};
+use super::{invoke_wasm_and_catch_traps, HostAbi};
+use crate::runtime::vm::{VMContext, VMFuncRef, VMNativeCallFunction, VMOpaqueContext};
 use crate::store::{AutoAssertNoGc, StoreOpaque};
 use crate::{
     AsContext, AsContextMut, Engine, Func, FuncType, HeapType, NoFunc, RefType, StoreContextMut,
     ValRaw, ValType,
 };
 use anyhow::{bail, Context, Result};
-use core::ffi::c_void;
-use core::marker;
-use core::mem::{self, MaybeUninit};
-use core::num::NonZeroUsize;
-use core::ptr::{self};
+use std::marker;
+use std::mem::{self, MaybeUninit};
+use std::num::NonZeroUsize;
+use std::os::raw::c_void;
+use std::ptr::{self, NonNull};
 use wasmtime_environ::VMSharedTypeIndex;
 
 /// A statically typed WebAssembly function.
@@ -125,6 +125,7 @@ where
     ///
     /// [`Trap`]: crate::Trap
     #[cfg(feature = "async")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
     pub async fn call_async<T>(
         &self,
         mut store: impl AsContextMut<Data = T>,
@@ -154,7 +155,7 @@ where
         #[cfg(feature = "gc")]
         {
             // See the comment in `Func::call_impl_check_args`.
-            let num_gc_refs = _params.vmgcref_pointing_to_object_count();
+            let num_gc_refs = _params.non_i31_gc_refs_count();
             if let Some(num_gc_refs) = NonZeroUsize::new(num_gc_refs) {
                 return _store
                     .unwrap_gc_store()
@@ -190,43 +191,33 @@ where
         // belong within this store, otherwise it would be unsafe for store
         // values to cross each other.
 
-        union Storage<T: Copy, U: Copy> {
-            params: MaybeUninit<T>,
-            results: U,
-        }
-
-        let mut storage = Storage::<Params::ValRawStorage, Results::ValRawStorage> {
-            params: MaybeUninit::uninit(),
-        };
-
-        {
+        let params = {
             let mut store = AutoAssertNoGc::new(store.0);
-            params.store(&mut store, ty, &mut storage.params)?;
-        }
+            params.into_abi(&mut store, ty)?
+        };
 
         // Try to capture only a single variable (a tuple) in the closure below.
         // This means the size of the closure is one pointer and is much more
         // efficient to move in memory. This closure is actually invoked on the
         // other side of a C++ shim, so it can never be inlined enough to make
         // the memory go away, so the size matters here for performance.
-        let mut captures = (func, storage);
+        let mut captures = (func, MaybeUninit::uninit(), params, false);
 
         let result = invoke_wasm_and_catch_traps(store, |caller| {
-            let (func_ref, storage) = &mut captures;
+            let (func_ref, ret, params, returned) = &mut captures;
             let func_ref = func_ref.as_ref();
-            (func_ref.array_call)(
-                func_ref.vmctx,
-                VMOpaqueContext::from_vmcontext(caller),
-                (storage as *mut Storage<_, _>) as *mut ValRaw,
-                mem::size_of_val::<Storage<_, _>>(storage) / mem::size_of::<ValRaw>(),
-            );
+            let result =
+                Params::invoke::<Results>(func_ref.native_call, func_ref.vmctx, caller, *params);
+            ptr::write(ret.as_mut_ptr(), result);
+            *returned = true
         });
 
-        let (_, storage) = captures;
+        let (_, ret, _, returned) = captures;
+        debug_assert_eq!(result.is_ok(), returned);
         result?;
 
         let mut store = AutoAssertNoGc::new(store.0);
-        Ok(Results::load(&mut store, &storage.results))
+        Ok(Results::from_abi(&mut store, ret.assume_init()))
     }
 
     /// Purely a debug-mode assertion, not actually used in release builds.
@@ -255,6 +246,11 @@ pub enum TypeCheckPosition {
 ///
 /// For more information see [`Func::wrap`] and [`Func::typed`]
 pub unsafe trait WasmTy: Send {
+    // The raw ABI type that values of this type can be converted to and passed
+    // to Wasm, or given from Wasm and converted back from.
+    #[doc(hidden)]
+    type Abi: 'static + Copy;
+
     // Do a "static" (aka at time of `func.typed::<P, R>()`) ahead-of-time type
     // check for this type at the given position. You probably don't need to
     // override this trait method.
@@ -334,20 +330,19 @@ pub unsafe trait WasmTy: Send {
         actual: &HeapType,
     ) -> Result<()>;
 
-    // Is this a GC-managed reference that actually points to a GC object? That
-    // is, `self` is *not* an `i31`, null reference, or uninhabited type.
-    //
-    // Note that it is okay if this returns false positives (i.e. `true` for
-    // `Rooted<AnyRef>` without actually looking up the rooted `anyref` in the
-    // store and reflecting on it to determine whether it is actually an
-    // `i31`). However, it is not okay if this returns false negatives.
+    // Is this an externref?
     #[doc(hidden)]
-    #[inline]
-    fn is_vmgcref_and_points_to_object(&self) -> bool {
-        Self::valtype().is_vmgcref_type_and_points_to_object()
-    }
+    fn is_non_i31_gc_ref(&self) -> bool;
 
-    // Store `self` into `ptr`.
+    // Construct a `Self::Abi` from the given `ValRaw`.
+    #[doc(hidden)]
+    unsafe fn abi_from_raw(raw: *mut ValRaw) -> Self::Abi;
+
+    // Stuff our given `Self::Abi` into a `ValRaw`.
+    #[doc(hidden)]
+    unsafe fn abi_into_raw(abi: Self::Abi, raw: *mut ValRaw);
+
+    // Convert `self` into `Self::Abi`.
     //
     // NB: We _must not_ trigger a GC when passing refs from host code into Wasm
     // (e.g. returned from a host function or passed as arguments to a Wasm
@@ -376,21 +371,17 @@ pub unsafe trait WasmTy: Send {
     // In conclusion, to prevent uses-after-free bugs, we cannot GC while
     // converting types into their raw ABI forms.
     #[doc(hidden)]
-    fn store(self, store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()>;
+    fn into_abi(self, store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi>;
 
-    // Load a version of `Self` from the `ptr` provided.
-    //
-    // # Safety
-    //
-    // This function is unsafe as it's up to the caller to ensure that `ptr` is
-    // valid for this given type.
+    // Convert back from `Self::Abi` into `Self`.
     #[doc(hidden)]
-    unsafe fn load(store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self;
+    unsafe fn from_abi(abi: Self::Abi, store: &mut AutoAssertNoGc<'_>) -> Self;
 }
 
 macro_rules! integers {
     ($($primitive:ident/$get_primitive:ident => $ty:ident)*) => ($(
         unsafe impl WasmTy for $primitive {
+            type Abi = $primitive;
             #[inline]
             fn valtype() -> ValType {
                 ValType::$ty
@@ -404,13 +395,25 @@ macro_rules! integers {
                 unreachable!()
             }
             #[inline]
-            fn store(self, _store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
-                ptr.write(ValRaw::$primitive(self));
-                Ok(())
+            fn is_non_i31_gc_ref(&self) -> bool {
+                false
             }
             #[inline]
-            unsafe fn load(_store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self {
-                ptr.$get_primitive()
+            unsafe fn abi_from_raw(raw: *mut ValRaw) -> $primitive {
+                (*raw).$get_primitive()
+            }
+            #[inline]
+            unsafe fn abi_into_raw(abi: $primitive, raw: *mut ValRaw) {
+                *raw = ValRaw::$primitive(abi);
+            }
+            #[inline]
+            fn into_abi(self, _store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi>
+            {
+                Ok(self)
+            }
+            #[inline]
+            unsafe fn from_abi(abi: Self::Abi, _store: &mut AutoAssertNoGc<'_>) -> Self {
+                abi
             }
         }
     )*)
@@ -426,6 +429,7 @@ integers! {
 macro_rules! floats {
     ($($float:ident/$int:ident/$get_float:ident => $ty:ident)*) => ($(
         unsafe impl WasmTy for $float {
+            type Abi = $float;
             #[inline]
             fn valtype() -> ValType {
                 ValType::$ty
@@ -439,13 +443,25 @@ macro_rules! floats {
                 unreachable!()
             }
             #[inline]
-            fn store(self, _store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
-                ptr.write(ValRaw::$float(self.to_bits()));
-                Ok(())
+            fn is_non_i31_gc_ref(&self) -> bool {
+                false
             }
             #[inline]
-            unsafe fn load(_store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self {
-                $float::from_bits(ptr.$get_float())
+            unsafe fn abi_from_raw(raw: *mut ValRaw) -> $float {
+                $float::from_bits((*raw).$get_float())
+            }
+            #[inline]
+            unsafe fn abi_into_raw(abi: $float, raw: *mut ValRaw) {
+                *raw = ValRaw::$float(abi.to_bits());
+            }
+            #[inline]
+            fn into_abi(self, _store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi>
+            {
+                Ok(self)
+            }
+            #[inline]
+            unsafe fn from_abi(abi: Self::Abi, _store: &mut AutoAssertNoGc<'_>) -> Self {
+                abi
             }
         }
     )*)
@@ -457,6 +473,8 @@ floats! {
 }
 
 unsafe impl WasmTy for NoFunc {
+    type Abi = NoFunc;
+
     #[inline]
     fn valtype() -> ValType {
         ValType::Ref(RefType::new(false, HeapType::NoFunc))
@@ -473,22 +491,34 @@ unsafe impl WasmTy for NoFunc {
     }
 
     #[inline]
-    fn is_vmgcref_and_points_to_object(&self) -> bool {
+    fn is_non_i31_gc_ref(&self) -> bool {
         match self._inner {}
     }
 
     #[inline]
-    fn store(self, _store: &mut AutoAssertNoGc<'_>, _ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
-        match self._inner {}
+    unsafe fn abi_from_raw(_raw: *mut ValRaw) -> Self::Abi {
+        unreachable!("NoFunc is uninhabited")
     }
 
     #[inline]
-    unsafe fn load(_store: &mut AutoAssertNoGc<'_>, _ptr: &ValRaw) -> Self {
+    unsafe fn abi_into_raw(_abi: Self::Abi, _raw: *mut ValRaw) {
+        unreachable!("NoFunc is uninhabited")
+    }
+
+    #[inline]
+    fn into_abi(self, _store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi> {
+        unreachable!("NoFunc is uninhabited")
+    }
+
+    #[inline]
+    unsafe fn from_abi(_abi: Self::Abi, _store: &mut AutoAssertNoGc<'_>) -> Self {
         unreachable!("NoFunc is uninhabited")
     }
 }
 
 unsafe impl WasmTy for Option<NoFunc> {
+    type Abi = *mut NoFunc;
+
     #[inline]
     fn valtype() -> ValType {
         ValType::Ref(RefType::new(true, HeapType::NoFunc))
@@ -515,18 +545,34 @@ unsafe impl WasmTy for Option<NoFunc> {
     }
 
     #[inline]
-    fn store(self, _store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
-        ptr.write(ValRaw::funcref(ptr::null_mut()));
-        Ok(())
+    fn is_non_i31_gc_ref(&self) -> bool {
+        false
     }
 
     #[inline]
-    unsafe fn load(_store: &mut AutoAssertNoGc<'_>, _ptr: &ValRaw) -> Self {
+    unsafe fn abi_from_raw(_raw: *mut ValRaw) -> Self::Abi {
+        ptr::null_mut()
+    }
+
+    #[inline]
+    unsafe fn abi_into_raw(_abi: Self::Abi, raw: *mut ValRaw) {
+        *raw = ValRaw::funcref(ptr::null_mut());
+    }
+
+    #[inline]
+    fn into_abi(self, _store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi> {
+        Ok(ptr::null_mut())
+    }
+
+    #[inline]
+    unsafe fn from_abi(_abi: Self::Abi, _store: &mut AutoAssertNoGc<'_>) -> Self {
         None
     }
 }
 
 unsafe impl WasmTy for Func {
+    type Abi = NonNull<crate::runtime::vm::VMFuncRef>;
+
     #[inline]
     fn valtype() -> ValType {
         ValType::Ref(RefType::new(false, HeapType::Func))
@@ -550,21 +596,36 @@ unsafe impl WasmTy for Func {
     }
 
     #[inline]
-    fn store(self, store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
-        let abi = self.vm_func_ref(store);
-        ptr.write(ValRaw::funcref(abi.cast::<c_void>().as_ptr()));
-        Ok(())
+    fn is_non_i31_gc_ref(&self) -> bool {
+        false
     }
 
     #[inline]
-    unsafe fn load(store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self {
-        let p = ptr.get_funcref();
+    unsafe fn abi_from_raw(raw: *mut ValRaw) -> Self::Abi {
+        let p = (*raw).get_funcref();
         debug_assert!(!p.is_null());
-        Func::from_vm_func_ref(store, p.cast()).unwrap()
+        NonNull::new_unchecked(p.cast::<crate::runtime::vm::VMFuncRef>())
+    }
+
+    #[inline]
+    unsafe fn abi_into_raw(abi: Self::Abi, raw: *mut ValRaw) {
+        *raw = ValRaw::funcref(abi.cast::<c_void>().as_ptr());
+    }
+
+    #[inline]
+    fn into_abi(self, store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi> {
+        Ok(self.vm_func_ref(store))
+    }
+
+    #[inline]
+    unsafe fn from_abi(abi: Self::Abi, store: &mut AutoAssertNoGc<'_>) -> Self {
+        Func::from_vm_func_ref(store, abi.as_ptr()).unwrap()
     }
 }
 
 unsafe impl WasmTy for Option<Func> {
+    type Abi = *mut crate::runtime::vm::VMFuncRef;
+
     #[inline]
     fn valtype() -> ValType {
         ValType::FUNCREF
@@ -597,19 +658,32 @@ unsafe impl WasmTy for Option<Func> {
     }
 
     #[inline]
-    fn store(self, store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
-        let raw = if let Some(f) = self {
-            f.vm_func_ref(store).as_ptr()
-        } else {
-            ptr::null_mut()
-        };
-        ptr.write(ValRaw::funcref(raw.cast::<c_void>()));
-        Ok(())
+    fn is_non_i31_gc_ref(&self) -> bool {
+        false
     }
 
     #[inline]
-    unsafe fn load(store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self {
-        Func::from_vm_func_ref(store, ptr.get_funcref().cast())
+    unsafe fn abi_from_raw(raw: *mut ValRaw) -> Self::Abi {
+        (*raw).get_funcref() as Self::Abi
+    }
+
+    #[inline]
+    unsafe fn abi_into_raw(abi: Self::Abi, raw: *mut ValRaw) {
+        *raw = ValRaw::funcref(abi.cast());
+    }
+
+    #[inline]
+    fn into_abi(self, store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi> {
+        Ok(if let Some(f) = self {
+            f.vm_func_ref(store).as_ptr()
+        } else {
+            ptr::null_mut()
+        })
+    }
+
+    #[inline]
+    unsafe fn from_abi(abi: Self::Abi, store: &mut AutoAssertNoGc<'_>) -> Self {
+        Func::from_vm_func_ref(store, abi)
     }
 }
 
@@ -620,7 +694,7 @@ unsafe impl WasmTy for Option<Func> {
 /// tuples of those types.
 pub unsafe trait WasmParams: Send {
     #[doc(hidden)]
-    type ValRawStorage: Copy;
+    type Abi: Copy;
 
     #[doc(hidden)]
     fn typecheck(
@@ -630,15 +704,18 @@ pub unsafe trait WasmParams: Send {
     ) -> Result<()>;
 
     #[doc(hidden)]
-    fn vmgcref_pointing_to_object_count(&self) -> usize;
+    fn non_i31_gc_refs_count(&self) -> usize;
 
     #[doc(hidden)]
-    fn store(
-        self,
-        store: &mut AutoAssertNoGc<'_>,
-        func_ty: &FuncType,
-        dst: &mut MaybeUninit<Self::ValRawStorage>,
-    ) -> Result<()>;
+    fn into_abi(self, store: &mut AutoAssertNoGc<'_>, func_ty: &FuncType) -> Result<Self::Abi>;
+
+    #[doc(hidden)]
+    unsafe fn invoke<R: WasmResults>(
+        func: NonNull<VMNativeCallFunction>,
+        vmctx1: *mut VMOpaqueContext,
+        vmctx2: *mut VMContext,
+        abi: Self::Abi,
+    ) -> R::ResultAbi;
 }
 
 // Forward an impl from `T` to `(T,)` for convenience if there's only one
@@ -647,7 +724,7 @@ unsafe impl<T> WasmParams for T
 where
     T: WasmTy,
 {
-    type ValRawStorage = <(T,) as WasmParams>::ValRawStorage;
+    type Abi = <(T,) as WasmParams>::Abi;
 
     fn typecheck(
         engine: &Engine,
@@ -658,18 +735,22 @@ where
     }
 
     #[inline]
-    fn vmgcref_pointing_to_object_count(&self) -> usize {
-        T::is_vmgcref_and_points_to_object(self) as usize
+    fn non_i31_gc_refs_count(&self) -> usize {
+        T::is_non_i31_gc_ref(self) as usize
     }
 
     #[inline]
-    fn store(
-        self,
-        store: &mut AutoAssertNoGc<'_>,
-        func_ty: &FuncType,
-        dst: &mut MaybeUninit<Self::ValRawStorage>,
-    ) -> Result<()> {
-        <(T,) as WasmParams>::store((self,), store, func_ty, dst)
+    fn into_abi(self, store: &mut AutoAssertNoGc<'_>, func_ty: &FuncType) -> Result<Self::Abi> {
+        <(T,) as WasmParams>::into_abi((self,), store, func_ty)
+    }
+
+    unsafe fn invoke<R: WasmResults>(
+        func: NonNull<VMNativeCallFunction>,
+        vmctx1: *mut VMOpaqueContext,
+        vmctx2: *mut VMContext,
+        abi: Self::Abi,
+    ) -> R::ResultAbi {
+        <(T,) as WasmParams>::invoke::<R>(func, vmctx1, vmctx2, abi)
     }
 }
 
@@ -677,7 +758,7 @@ macro_rules! impl_wasm_params {
     ($n:tt $($t:ident)*) => {
         #[allow(non_snake_case)]
         unsafe impl<$($t: WasmTy,)*> WasmParams for ($($t,)*) {
-            type ValRawStorage = [ValRaw; $n];
+            type Abi = ($($t::Abi,)*);
 
             fn typecheck(
                 _engine: &Engine,
@@ -706,21 +787,20 @@ macro_rules! impl_wasm_params {
             }
 
             #[inline]
-            fn vmgcref_pointing_to_object_count(&self) -> usize {
+            fn non_i31_gc_refs_count(&self) -> usize {
                 let ($(ref $t,)*) = self;
                 0 $(
-                    + $t.is_vmgcref_and_points_to_object() as usize
+                    + $t.is_non_i31_gc_ref() as usize
                 )*
             }
 
 
             #[inline]
-            fn store(
+            fn into_abi(
                 self,
                 _store: &mut AutoAssertNoGc<'_>,
                 _func_ty: &FuncType,
-                _ptr: &mut MaybeUninit<Self::ValRawStorage>,
-            ) -> Result<()> {
+            ) -> Result<Self::Abi> {
                 let ($($t,)*) = self;
 
                 let mut _i = 0;
@@ -738,12 +818,39 @@ macro_rules! impl_wasm_params {
                         }
                     }
 
-                    let dst = map_maybe_uninit!(_ptr[_i]);
-                    $t.store(_store, dst)?;
+                    let $t = $t.into_abi(_store)?;
 
                     _i += 1;
                 )*
-                Ok(())
+                Ok(($($t,)*))
+            }
+
+            unsafe fn invoke<R: WasmResults>(
+                func: NonNull<VMNativeCallFunction>,
+                vmctx1: *mut VMOpaqueContext,
+                vmctx2: *mut VMContext,
+                abi: Self::Abi,
+            ) -> R::ResultAbi {
+                let fnptr = mem::transmute::<
+                    NonNull<VMNativeCallFunction>,
+                    unsafe extern "C" fn(
+                        *mut VMOpaqueContext,
+                        *mut VMContext,
+                        $($t::Abi,)*
+                        <R::ResultAbi as HostAbi>::Retptr,
+                    ) -> <R::ResultAbi as HostAbi>::Abi,
+                    >(func);
+                let ($($t,)*) = abi;
+                // Use the `call` function to acquire a `retptr` which we'll
+                // forward to the native function. Once we have it we also
+                // convert all our arguments to abi arguments to go to the raw
+                // function.
+                //
+                // Upon returning `R::call` will convert all the returns back
+                // into `R`.
+                <R::ResultAbi as HostAbi>::call(|retptr| {
+                    fnptr(vmctx1, vmctx2, $($t,)* retptr)
+                })
             }
         }
     };
@@ -755,23 +862,36 @@ for_each_function_signature!(impl_wasm_params);
 /// results for wasm functions.
 pub unsafe trait WasmResults: WasmParams {
     #[doc(hidden)]
-    unsafe fn load(store: &mut AutoAssertNoGc<'_>, abi: &Self::ValRawStorage) -> Self;
+    type ResultAbi: HostAbi;
+
+    #[doc(hidden)]
+    unsafe fn from_abi(store: &mut AutoAssertNoGc<'_>, abi: Self::ResultAbi) -> Self;
 }
 
 // Forwards from a bare type `T` to the 1-tuple type `(T,)`
-unsafe impl<T: WasmTy> WasmResults for T {
-    unsafe fn load(store: &mut AutoAssertNoGc<'_>, abi: &Self::ValRawStorage) -> Self {
-        <(T,) as WasmResults>::load(store, abi).0
+unsafe impl<T: WasmTy> WasmResults for T
+where
+    (T::Abi,): HostAbi,
+{
+    type ResultAbi = <(T,) as WasmResults>::ResultAbi;
+
+    unsafe fn from_abi(store: &mut AutoAssertNoGc<'_>, abi: Self::ResultAbi) -> Self {
+        <(T,) as WasmResults>::from_abi(store, abi).0
     }
 }
 
 macro_rules! impl_wasm_results {
     ($n:tt $($t:ident)*) => {
         #[allow(non_snake_case, unused_variables)]
-        unsafe impl<$($t: WasmTy,)*> WasmResults for ($($t,)*) {
-            unsafe fn load(store: &mut AutoAssertNoGc<'_>, abi: &Self::ValRawStorage) -> Self {
-                let [$($t,)*] = abi;
-                ($($t::load(store, $t),)*)
+        unsafe impl<$($t: WasmTy,)*> WasmResults for ($($t,)*)
+            where ($($t::Abi,)*): HostAbi
+        {
+            type ResultAbi = ($($t::Abi,)*);
+
+            #[inline]
+            unsafe fn from_abi(store: &mut AutoAssertNoGc<'_>, abi: Self::ResultAbi) -> Self {
+                let ($($t,)*) = abi;
+                ($($t::from_abi($t, store),)*)
             }
         }
     };

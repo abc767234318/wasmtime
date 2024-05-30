@@ -379,7 +379,7 @@ pub struct MachLabel(u32);
 entity_impl!(MachLabel);
 
 impl MachLabel {
-    /// Get a label for a block. (The first N MachLabels are always reserved for
+    /// Get a label for a block. (The first N MachLabels are always reseved for
     /// the N blocks in the vcode.)
     pub fn from_block(bindex: BlockIndex) -> MachLabel {
         MachLabel(bindex.index() as u32)
@@ -742,7 +742,7 @@ impl<I: VCodeInst> MachBuffer<I> {
     }
 
     /// Inform the buffer of an unconditional branch at the given offset,
-    /// targeting the given label. May be used to optimize branches.
+    /// targetting the given label. May be used to optimize branches.
     /// The last added label-use must correspond to this branch.
     /// This must be called when the current offset is equal to `start`; i.e.,
     /// before actually emitting the branch. This implies that for a branch that
@@ -779,7 +779,7 @@ impl<I: VCodeInst> MachBuffer<I> {
     }
 
     /// Inform the buffer of a conditional branch at the given offset,
-    /// targeting the given label. May be used to optimize branches.
+    /// targetting the given label. May be used to optimize branches.
     /// The last added label-use must correspond to this branch.
     ///
     /// Additional requirement: no labels may be bound between `start` and `end`
@@ -968,7 +968,7 @@ impl<I: VCodeInst> MachBuffer<I> {
 
             // For any branch, conditional or unconditional:
             // - If the target is a label at the current offset, then remove
-            //   the conditional branch, and reset all labels that targeted
+            //   the conditional branch, and reset all labels that targetted
             //   the current offset (end of branch) to the truncated
             //   end-of-code.
             //
@@ -1659,6 +1659,10 @@ impl<I: VCodeInst> MachBuffer<I> {
 
     /// Add stack map metadata for this program point: a set of stack offsets
     /// (from SP upward) that contain live references.
+    ///
+    /// The `offset_to_fp` value is the offset from the nominal SP (at which the `stack_offsets`
+    /// are based) and the FP value. By subtracting `offset_to_fp` from each `stack_offsets`
+    /// element, one can obtain live-reference offsets from FP instead.
     pub fn add_stack_map(&mut self, extent: StackMapExtent, stack_map: StackMap) {
         let (start, end) = match extent {
             StackMapExtent::UpcomingBytes(insn_len) => {
@@ -2095,7 +2099,7 @@ mod test {
         buf.reserve_labels_for_blocks(2);
         buf.bind_label(label(0), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(1) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
         buf.bind_label(label(1), state.ctrl_plane_mut());
         let buf = buf.finish(&constants, state.ctrl_plane_mut());
         assert_eq!(0, buf.total_size());
@@ -2116,15 +2120,15 @@ mod test {
             taken: target(1),
             not_taken: target(2),
         };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(1), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(3) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(2), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(3) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(3), state.ctrl_plane_mut());
 
@@ -2147,17 +2151,17 @@ mod test {
             taken: target(1),
             not_taken: target(2),
         };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(1), state.ctrl_plane_mut());
         let inst = Inst::Nop4;
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(2), state.ctrl_plane_mut());
         let inst = Inst::Udf {
             trap_code: TrapCode::Interrupt,
         };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(3), state.ctrl_plane_mut());
 
@@ -2169,9 +2173,9 @@ mod test {
             kind: CondBrKind::NotZero(xreg(0)),
             trap_code: TrapCode::Interrupt,
         };
-        inst.emit(&mut buf2, &info, &mut state);
+        inst.emit(&[], &mut buf2, &info, &mut state);
         let inst = Inst::Nop4;
-        inst.emit(&mut buf2, &info, &mut state);
+        inst.emit(&[], &mut buf2, &info, &mut state);
 
         let buf2 = buf2.finish(&constants, state.ctrl_plane_mut());
 
@@ -2193,7 +2197,7 @@ mod test {
             taken: target(2),
             not_taken: target(3),
         };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(1), state.ctrl_plane_mut());
         while buf.cur_offset() < 2000000 {
@@ -2201,16 +2205,16 @@ mod test {
                 buf.emit_island(0, state.ctrl_plane_mut());
             }
             let inst = Inst::Nop4;
-            inst.emit(&mut buf, &info, &mut state);
+            inst.emit(&[], &mut buf, &info, &mut state);
         }
 
         buf.bind_label(label(2), state.ctrl_plane_mut());
         let inst = Inst::Nop4;
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(3), state.ctrl_plane_mut());
         let inst = Inst::Nop4;
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         let buf = buf.finish(&constants, state.ctrl_plane_mut());
 
@@ -2240,7 +2244,7 @@ mod test {
             // go directly to the target.
             not_taken: BranchTarget::ResolvedOffset(2000000 + 4 - 4),
         };
-        inst.emit(&mut buf2, &info, &mut state);
+        inst.emit(&[], &mut buf2, &info, &mut state);
 
         let buf2 = buf2.finish(&constants, state.ctrl_plane_mut());
 
@@ -2258,16 +2262,16 @@ mod test {
 
         buf.bind_label(label(0), state.ctrl_plane_mut());
         let inst = Inst::Nop4;
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(1), state.ctrl_plane_mut());
         let inst = Inst::Nop4;
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(2), state.ctrl_plane_mut());
         while buf.cur_offset() < 2000000 {
             let inst = Inst::Nop4;
-            inst.emit(&mut buf, &info, &mut state);
+            inst.emit(&[], &mut buf, &info, &mut state);
         }
 
         buf.bind_label(label(3), state.ctrl_plane_mut());
@@ -2276,7 +2280,7 @@ mod test {
             taken: target(0),
             not_taken: target(1),
         };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         let buf = buf.finish(&constants, state.ctrl_plane_mut());
 
@@ -2289,11 +2293,11 @@ mod test {
             taken: BranchTarget::ResolvedOffset(8),
             not_taken: BranchTarget::ResolvedOffset(4 - (2000000 + 4)),
         };
-        inst.emit(&mut buf2, &info, &mut state);
+        inst.emit(&[], &mut buf2, &info, &mut state);
         let inst = Inst::Jump {
             dest: BranchTarget::ResolvedOffset(-(2000000 + 8)),
         };
-        inst.emit(&mut buf2, &info, &mut state);
+        inst.emit(&[], &mut buf2, &info, &mut state);
 
         let buf2 = buf2.finish(&constants, state.ctrl_plane_mut());
 
@@ -2348,38 +2352,38 @@ mod test {
             taken: target(1),
             not_taken: target(2),
         };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(1), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(3) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(2), state.ctrl_plane_mut());
         let inst = Inst::Nop4;
-        inst.emit(&mut buf, &info, &mut state);
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
         let inst = Inst::Jump { dest: target(0) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(3), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(4) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(4), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(5) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(5), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(7) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(6), state.ctrl_plane_mut());
         let inst = Inst::Nop4;
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(7), state.ctrl_plane_mut());
         let inst = Inst::Ret {};
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         let buf = buf.finish(&constants, state.ctrl_plane_mut());
 
@@ -2421,23 +2425,23 @@ mod test {
 
         buf.bind_label(label(0), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(1) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(1), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(2) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(2), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(3) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(3), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(4) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         buf.bind_label(label(4), state.ctrl_plane_mut());
         let inst = Inst::Jump { dest: target(1) };
-        inst.emit(&mut buf, &info, &mut state);
+        inst.emit(&[], &mut buf, &info, &mut state);
 
         let buf = buf.finish(&constants, state.ctrl_plane_mut());
 

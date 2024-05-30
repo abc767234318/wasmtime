@@ -139,7 +139,7 @@ extern "C" {
     /// Attempts to create a new in-memory image of the `ptr`/`len` combo which
     /// can be mapped to virtual addresses in the future.
     ///
-    /// On success the returned `wasmtime_memory_image` pointer is stored into `ret`.
+    /// On successed the returned `wasmtime_memory_image` pointer is stored into `ret`.
     /// This value stored can be `NULL` to indicate that an image cannot be
     /// created but no failure occurred. The structure otherwise will later be
     /// deallocated with `wasmtime_memory_image_free` and
@@ -186,15 +186,4 @@ extern "C" {
     /// Note that mappings created from this image are not guaranteed to be
     /// deallocated and/or unmapped before this is called.
     pub fn wasmtime_memory_image_free(image: *mut wasmtime_memory_image);
-
-    /// Wasmtime requires a single pointer's space of TLS to be used at runtime,
-    /// and this function returns the current value of the TLS variable.
-    ///
-    /// This value should default to `NULL`.
-    pub fn wasmtime_tls_get() -> *mut u8;
-
-    /// Sets the current TLS value for Wasmtime to the provided value.
-    ///
-    /// This value should be returned when later calling `wasmtime_tls_get`.
-    pub fn wasmtime_tls_set(ptr: *mut u8);
 }

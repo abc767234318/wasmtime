@@ -9,8 +9,6 @@ use crate::{
     store::{AutoAssertNoGc, StoreOpaque},
     HeapType, RefType, Result, ValType, WasmTy,
 };
-use core::fmt;
-use core::mem::MaybeUninit;
 
 /// A 31-bit integer.
 ///
@@ -78,8 +76,8 @@ use core::mem::MaybeUninit;
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct I31(crate::runtime::vm::I31);
 
-impl fmt::Debug for I31 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Debug for I31 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("I31")
             .field("as_u32", &self.get_u32())
             .field("as_i32", &self.get_i32())
@@ -221,6 +219,10 @@ impl I31 {
 }
 
 unsafe impl WasmTy for I31 {
+    // TODO: This should eventually just be `VMGcRef`, but Cranelift doesn't
+    // currently support using its `r32` type on 64-bit platforms.
+    type Abi = u64;
+
     #[inline]
     fn valtype() -> ValType {
         ValType::Ref(RefType::new(false, HeapType::I31))
@@ -240,21 +242,39 @@ unsafe impl WasmTy for I31 {
         unreachable!()
     }
 
-    fn store(self, _store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
-        let r64 = VMGcRef::from_i31(self.into()).into_r64();
-        let anyref = u32::try_from(r64).unwrap();
-        ptr.write(ValRaw::anyref(anyref));
-        Ok(())
+    #[inline]
+    fn is_non_i31_gc_ref(&self) -> bool {
+        false
     }
 
-    unsafe fn load(_store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self {
-        let raw = ptr.get_anyref();
+    #[inline]
+    unsafe fn abi_from_raw(raw: *mut ValRaw) -> Self::Abi {
+        let raw = (*raw).get_anyref();
         if cfg!(debug_assertions) {
             let gc_ref = VMGcRef::from_raw_u32(raw).unwrap();
             assert!(gc_ref.is_i31());
         }
-        let r64 = u64::from(raw);
-        let gc_ref = VMGcRef::from_r64(r64)
+        u64::from(raw)
+    }
+
+    #[inline]
+    unsafe fn abi_into_raw(abi: Self::Abi, raw: *mut ValRaw) {
+        if cfg!(debug_assertions) {
+            let gc_ref = VMGcRef::from_r64(abi).unwrap().unwrap();
+            assert!(gc_ref.is_i31());
+        }
+        let anyref = u32::try_from(abi).unwrap();
+        *raw = ValRaw::anyref(anyref)
+    }
+
+    #[inline]
+    fn into_abi(self, _store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi> {
+        Ok(VMGcRef::from_i31(self.into()).into_r64())
+    }
+
+    #[inline]
+    unsafe fn from_abi(abi: Self::Abi, _store: &mut AutoAssertNoGc<'_>) -> Self {
+        let gc_ref = VMGcRef::from_r64(abi)
             .expect("valid r64")
             .expect("non-null");
         gc_ref.unwrap_i31().into()
@@ -262,6 +282,10 @@ unsafe impl WasmTy for I31 {
 }
 
 unsafe impl WasmTy for Option<I31> {
+    // TODO: This should eventually just be `VMGcRef`, but Cranelift doesn't
+    // currently support using its `r32` type on 64-bit platforms.
+    type Abi = u64;
+
     #[inline]
     fn valtype() -> ValType {
         ValType::Ref(RefType::new(true, HeapType::I31))
@@ -281,19 +305,41 @@ unsafe impl WasmTy for Option<I31> {
         unreachable!()
     }
 
-    fn store(self, store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
-        match self {
-            Some(i) => i.store(store, ptr),
-            None => {
-                ptr.write(ValRaw::anyref(0));
-                Ok(())
-            }
-        }
+    #[inline]
+    fn is_non_i31_gc_ref(&self) -> bool {
+        false
     }
 
-    unsafe fn load(_store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self {
-        let r64 = u64::from(ptr.get_anyref());
-        let gc_ref = VMGcRef::from_r64(r64).expect("valid r64")?;
-        Some(I31(gc_ref.unwrap_i31()))
+    #[inline]
+    unsafe fn abi_from_raw(raw: *mut ValRaw) -> Self::Abi {
+        let raw = (*raw).get_anyref();
+        if cfg!(debug_assertions) {
+            if let Some(gc_ref) = VMGcRef::from_raw_u32(raw) {
+                assert!(gc_ref.is_i31());
+            }
+        }
+        u64::from(raw)
+    }
+
+    #[inline]
+    unsafe fn abi_into_raw(abi: Self::Abi, raw: *mut ValRaw) {
+        if cfg!(debug_assertions) {
+            if let Some(gc_ref) = VMGcRef::from_r64(abi).unwrap() {
+                assert!(gc_ref.is_i31());
+            }
+        }
+        let anyref = u32::try_from(abi).unwrap();
+        *raw = ValRaw::anyref(anyref)
+    }
+
+    #[inline]
+    fn into_abi(self, _store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi> {
+        Ok(self.map_or(0, |x| VMGcRef::from_i31(x.into()).into_r64()))
+    }
+
+    #[inline]
+    unsafe fn from_abi(abi: Self::Abi, _store: &mut AutoAssertNoGc<'_>) -> Self {
+        let gc_ref = VMGcRef::from_r64(abi).expect("valid r64");
+        gc_ref.map(|r| r.unwrap_i31().into())
     }
 }

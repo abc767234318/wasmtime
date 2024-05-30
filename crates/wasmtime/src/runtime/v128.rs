@@ -6,9 +6,8 @@
 use crate::runtime::vm::V128Abi;
 use crate::store::{AutoAssertNoGc, StoreOpaque};
 use crate::{Result, ValRaw, ValType, WasmTy};
-use core::cmp::Ordering;
-use core::fmt;
-use core::mem::MaybeUninit;
+use std::cmp::Ordering;
+use std::fmt;
 
 /// Representation of a 128-bit vector type, `v128`, for WebAssembly.
 ///
@@ -84,6 +83,8 @@ impl Ord for V128 {
 // the documentation above in the `cfg_if!` for why this is conditional.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe impl WasmTy for V128 {
+    type Abi = V128Abi;
+
     #[inline]
     fn valtype() -> ValType {
         ValType::V128
@@ -104,13 +105,27 @@ unsafe impl WasmTy for V128 {
     }
 
     #[inline]
-    fn store(self, _store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
-        ptr.write(ValRaw::v128(self.as_u128()));
-        Ok(())
+    fn is_non_i31_gc_ref(&self) -> bool {
+        false
     }
 
     #[inline]
-    unsafe fn load(_store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self {
-        V128::from(ptr.get_v128())
+    unsafe fn abi_from_raw(raw: *mut ValRaw) -> Self::Abi {
+        V128::from((*raw).get_v128()).0
+    }
+
+    #[inline]
+    unsafe fn abi_into_raw(abi: Self::Abi, raw: *mut ValRaw) {
+        *raw = ValRaw::v128(V128(abi).as_u128());
+    }
+
+    #[inline]
+    fn into_abi(self, _store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi> {
+        Ok(self.0)
+    }
+
+    #[inline]
+    unsafe fn from_abi(abi: Self::Abi, _store: &mut AutoAssertNoGc<'_>) -> Self {
+        V128(abi)
     }
 }

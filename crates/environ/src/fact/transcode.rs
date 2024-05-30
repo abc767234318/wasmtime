@@ -1,6 +1,5 @@
 use crate::component::Transcode;
 use crate::fact::core_types::CoreTypes;
-use crate::prelude::*;
 use crate::MemoryIndex;
 use wasm_encoder::{EntityType, ValType};
 
@@ -67,7 +66,7 @@ impl Transcoder {
             }
 
             // The initial step of transcoding from a fixed format to a compact
-            // format. Takes the ptr/len of the source the destination
+            // format. Takes the ptr/len of the source the the destination
             // pointer. The destination length is implicitly the same. Returns
             // how many code units were consumed in the source, which is also
             // how many bytes were written to the destination.

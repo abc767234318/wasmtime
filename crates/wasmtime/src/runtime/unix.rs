@@ -9,7 +9,6 @@
 //! throughout the `wasmtime` crate with extra functionality that's only
 //! available on Unix.
 
-use crate::prelude::*;
 use crate::{AsContextMut, Store};
 
 /// Extensions for the [`Store`] type only available on Unix.

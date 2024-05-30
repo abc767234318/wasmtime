@@ -49,21 +49,6 @@ const array = [
     "os": "windows-latest",
     "target": "x86_64-pc-windows-gnu",
   },
-  {
-    "build": "aarch64-android",
-    "os": "ubuntu-latest",
-    "target": "aarch64-linux-android",
-  },
-  {
-    "build": "x86_64-android",
-    "os": "ubuntu-latest",
-    "target": "x86_64-linux-android",
-  },
-  {
-    "build": "x86_64-musl",
-    "os": "ubuntu-latest",
-    "target": "x86_64-unknown-linux-musl",
-  },
 ];
 
 const builds = [];
@@ -76,7 +61,7 @@ for (let build of array) {
   // Next generate a "min" build and add it to the builds list. Min builds
   // require Nightly rust due to some nightly build options that are configured.
   build.build += '-min';
-  build.rust = 'wasmtime-ci-pinned-nightly';
+  build.rust = 'nightly-2024-04-19';
   builds.push(build);
 }
 

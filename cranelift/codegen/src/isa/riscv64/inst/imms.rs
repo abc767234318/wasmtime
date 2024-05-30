@@ -62,7 +62,7 @@ impl Display for Imm12 {
     }
 }
 
-// signed
+// singed
 #[derive(Clone, Copy, Default)]
 pub struct Imm20 {
     /// 32-bit container where the low 20 bits are the data payload.

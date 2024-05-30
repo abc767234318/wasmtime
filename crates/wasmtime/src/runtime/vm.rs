@@ -3,11 +3,11 @@
 #![deny(missing_docs)]
 #![warn(clippy::cast_sign_loss)]
 
-use alloc::sync::Arc;
 use anyhow::{Error, Result};
-use core::fmt;
-use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::fmt;
+use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use wasmtime_environ::{
     DefinedFuncIndex, DefinedMemoryIndex, HostPtr, ModuleInternedTypeIndex, VMOffsets,
     VMSharedTypeIndex,
@@ -55,8 +55,7 @@ pub use crate::runtime::vm::instance::{
 };
 #[cfg(feature = "pooling-allocator")]
 pub use crate::runtime::vm::instance::{
-    InstanceLimits, PoolConcurrencyLimitError, PoolingInstanceAllocator,
-    PoolingInstanceAllocatorConfig,
+    InstanceLimits, PoolingInstanceAllocator, PoolingInstanceAllocatorConfig,
 };
 pub use crate::runtime::vm::memory::{Memory, RuntimeLinearMemory, RuntimeMemoryCreator};
 pub use crate::runtime::vm::mmap::Mmap;
@@ -69,7 +68,8 @@ pub use crate::runtime::vm::traphandlers::*;
 pub use crate::runtime::vm::vmcontext::{
     VMArrayCallFunction, VMArrayCallHostFuncContext, VMContext, VMFuncRef, VMFunctionBody,
     VMFunctionImport, VMGlobalDefinition, VMGlobalImport, VMMemoryDefinition, VMMemoryImport,
-    VMOpaqueContext, VMRuntimeLimits, VMTableImport, VMWasmCallFunction, ValRaw,
+    VMNativeCallFunction, VMNativeCallHostFuncContext, VMOpaqueContext, VMRuntimeLimits,
+    VMTableImport, VMWasmCallFunction, ValRaw,
 };
 pub use send_sync_ptr::SendSyncPtr;
 
@@ -194,6 +194,16 @@ pub trait ModuleRuntimeInfo: Send + Sync + 'static {
     fn function(&self, index: DefinedFuncIndex) -> NonNull<VMWasmCallFunction>;
 
     /// Returns the address, in memory, of the trampoline that allows the given
+    /// defined Wasm function to be called by the native calling convention.
+    ///
+    /// Returns `None` for Wasm functions which do not escape, and therefore are
+    /// not callable from outside the Wasm module itself.
+    fn native_to_wasm_trampoline(
+        &self,
+        index: DefinedFuncIndex,
+    ) -> Option<NonNull<VMNativeCallFunction>>;
+
+    /// Returns the address, in memory, of the trampoline that allows the given
     /// defined Wasm function to be called by the array calling convention.
     ///
     /// Returns `None` for Wasm functions which do not escape, and therefore are
@@ -201,8 +211,8 @@ pub trait ModuleRuntimeInfo: Send + Sync + 'static {
     fn array_to_wasm_trampoline(&self, index: DefinedFuncIndex) -> Option<VMArrayCallFunction>;
 
     /// Return the address, in memory, of the trampoline that allows Wasm to
-    /// call a array function of the given signature.
-    fn wasm_to_array_trampoline(
+    /// call a native function of the given signature.
+    fn wasm_to_native_trampoline(
         &self,
         signature: VMSharedTypeIndex,
     ) -> Option<NonNull<VMWasmCallFunction>>;
@@ -243,7 +253,7 @@ pub fn page_size() -> usize {
     };
 }
 
-/// Result of `Memory::atomic_wait32` and `Memory::atomic_wait64`
+/// Result of [`Memory::atomic_wait32`] and [`Memory::atomic_wait64`]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum WaitResult {
     /// Indicates that a `wait` completed by being awoken by a different thread.

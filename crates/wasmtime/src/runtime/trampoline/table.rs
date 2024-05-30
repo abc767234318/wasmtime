@@ -1,4 +1,3 @@
-use crate::prelude::*;
 use crate::store::{InstanceId, StoreOpaque};
 use crate::trampoline::create_handle;
 use crate::TableType;

@@ -11,7 +11,7 @@ bindgen!("convert" in "./examples/component/convert.wit");
 
 struct HostComponent;
 
-// Implementation of the host interface defined in the wit file.
+// Implmentation of the host interface defined in the wit file.
 impl host::Host for HostComponent {
     fn multiply(&mut self, a: f32, b: f32) -> f32 {
         a * b
@@ -24,7 +24,7 @@ struct MyState {
 
 /// This function is only needed until rust can natively output a component.
 ///
-/// Generally embeddings should not be expected to do this programmatically, but instead
+/// Generally embeddings should not be expected to do this programatically, but instead
 /// language specific tooling should be used, for example in Rust `cargo component`
 /// is a good way of doing that: https://github.com/bytecodealliance/cargo-component
 ///

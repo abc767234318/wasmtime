@@ -13,8 +13,7 @@
 //! less catastrophic than doing an indirect call to an attacker-controlled
 //! function pointer.
 
-use crate::prelude::*;
-use core::any::Any;
+use std::any::Any;
 use wasmtime_slab::{Id, Slab};
 
 /// Side table for each `externref`'s host data value.

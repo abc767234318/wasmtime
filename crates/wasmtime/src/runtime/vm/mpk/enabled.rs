@@ -1,7 +1,6 @@
 //!
 
 use super::{pkru, sys};
-use crate::prelude::*;
 use anyhow::{Context, Result};
 use std::sync::OnceLock;
 

@@ -108,7 +108,7 @@ impl WasiCtxBuilder {
     /// Provides a custom implementation of stdin to use.
     ///
     /// By default stdin is closed but an example of using the host's native
-    /// stdin looks like:
+    /// stdin loos like:
     ///
     /// ```
     /// use wasmtime_wasi::{stdin, WasiCtxBuilder};
@@ -515,6 +515,7 @@ impl WasiCtxBuilder {
     /// usage of this method is not allowed and should use a second builder
     /// instead.
     #[cfg(feature = "preview1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "preview1")))]
     pub fn build_p1(&mut self) -> crate::preview1::WasiP1Ctx {
         let wasi = self.build();
         crate::preview1::WasiP1Ctx::new(wasi)
@@ -579,15 +580,6 @@ pub trait WasiView: Send {
     ///
     /// The returned type is created through [`WasiCtxBuilder`].
     fn ctx(&mut self) -> &mut WasiCtx;
-}
-
-impl<T: ?Sized + WasiView> WasiView for &mut T {
-    fn table(&mut self) -> &mut ResourceTable {
-        T::table(self)
-    }
-    fn ctx(&mut self) -> &mut WasiCtx {
-        T::ctx(self)
-    }
 }
 
 /// Per-[`Store`] state which holds state necessary to implement WASI from this

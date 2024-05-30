@@ -30,7 +30,7 @@ impl ExploreCommand {
     pub fn execute(mut self) -> Result<()> {
         self.common.init_logging()?;
 
-        let config = self.common.config(self.target.as_deref(), None)?;
+        let config = self.common.config(self.target.as_deref())?;
 
         let bytes =
             Cow::Owned(std::fs::read(&self.module).with_context(|| {

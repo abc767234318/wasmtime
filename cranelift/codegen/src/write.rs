@@ -218,7 +218,7 @@ fn write_arg(w: &mut dyn Write, func: &Function, arg: Value) -> fmt::Result {
 ///
 ///    block1:
 ///    block1(v1: i32):
-///    block10(v4: f64, v5: i8):
+///    block10(v4: f64, v5: b1):
 ///
 pub fn write_block_header(
     w: &mut dyn Write,
@@ -535,7 +535,7 @@ mod tests {
         f.name = UserFuncName::testcase("foo");
         assert_eq!(f.to_string(), "function %foo() fast {\n}\n");
 
-        f.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 4, 0));
+        f.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 4));
         assert_eq!(
             f.to_string(),
             "function %foo() fast {\n    ss0 = explicit_slot 4\n}\n"
@@ -568,13 +568,6 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "function %foo() fast {\n    ss0 = explicit_slot 4\n\nblock0(v0: i8, v1: f32x4):\n    return\n}\n"
-        );
-
-        let mut f = Function::new();
-        f.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 4, 2));
-        assert_eq!(
-            f.to_string(),
-            "function u0:0() fast {\n    ss0 = explicit_slot 4, align = 4\n}\n"
         );
     }
 

@@ -325,9 +325,6 @@ mod async_config {
             package foo:foo;
 
             world t1 {
-                import foo: interface {
-                    foo: func();
-                }
                 import x: func();
                 import y: func();
                 export z: func();

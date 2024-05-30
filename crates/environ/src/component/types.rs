@@ -1,9 +1,9 @@
 use crate::component::{MAX_FLAT_PARAMS, MAX_FLAT_RESULTS};
-use crate::prelude::*;
 use crate::{EntityType, ModuleTypes, PrimaryMap};
-use core::hash::{Hash, Hasher};
-use core::ops::Index;
+use indexmap::{IndexMap, IndexSet};
 use serde_derive::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
+use std::ops::Index;
 use wasmparser::types;
 use wasmtime_component_util::{DiscriminantSize, FlagsSize};
 use wasmtime_types::ModuleInternedTypeIndex;
@@ -285,7 +285,7 @@ impl ComponentTypes {
 
 macro_rules! impl_index {
     ($(impl Index<$ty:ident> for ComponentTypes { $output:ident => $field:ident })*) => ($(
-        impl core::ops::Index<$ty> for ComponentTypes {
+        impl std::ops::Index<$ty> for ComponentTypes {
             type Output = $output;
             #[inline]
             fn index(&self, idx: $ty) -> &$output {
@@ -294,7 +294,7 @@ macro_rules! impl_index {
         }
 
         #[cfg(feature = "compile")]
-        impl core::ops::Index<$ty> for super::ComponentTypesBuilder {
+        impl std::ops::Index<$ty> for super::ComponentTypesBuilder {
             type Output = $output;
             #[inline]
             fn index(&self, idx: $ty) -> &$output {
@@ -855,10 +855,7 @@ pub struct TypeVariant {
 impl Hash for TypeVariant {
     fn hash<H: Hasher>(&self, h: &mut H) {
         let TypeVariant { cases, abi, info } = self;
-        cases.len().hash(h);
-        for pair in cases {
-            pair.hash(h);
-        }
+        cases.as_slice().hash(h);
         abi.hash(h);
         info.hash(h);
     }
@@ -891,10 +888,7 @@ pub struct TypeFlags {
 impl Hash for TypeFlags {
     fn hash<H: Hasher>(&self, h: &mut H) {
         let TypeFlags { names, abi } = self;
-        names.len().hash(h);
-        for name in names {
-            name.hash(h);
-        }
+        names.as_slice().hash(h);
         abi.hash(h);
     }
 }
@@ -917,10 +911,7 @@ pub struct TypeEnum {
 impl Hash for TypeEnum {
     fn hash<H: Hasher>(&self, h: &mut H) {
         let TypeEnum { names, abi, info } = self;
-        names.len().hash(h);
-        for name in names {
-            name.hash(h);
-        }
+        names.as_slice().hash(h);
         abi.hash(h);
         info.hash(h);
     }
@@ -1026,8 +1017,8 @@ impl FlatTypes<'_> {
 }
 
 // Note that this is intentionally duplicated here to keep the size to 1 byte
-// regardless to changes in the core wasm type system since this will only
-// ever use integers/floats for the foreseeable future.
+// irregardless to changes in the core wasm type system since this will only
+// ever use integers/floats for the forseeable future.
 #[derive(PartialEq, Eq, Copy, Clone)]
 #[allow(missing_docs)]
 pub enum FlatType {

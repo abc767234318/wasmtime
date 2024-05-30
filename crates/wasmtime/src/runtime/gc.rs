@@ -8,11 +8,7 @@ mod disabled;
 #[cfg(not(feature = "gc"))]
 pub use disabled::*;
 
-mod noextern;
-pub use noextern::NoExtern;
-
-use core::fmt;
-use core::ops::Deref;
+use std::ops::Deref;
 
 /// A common trait implemented by all garbage-collected reference types.
 ///
@@ -65,19 +61,18 @@ pub struct GcHeapOutOfMemory<T> {
     inner: T,
 }
 
-impl<T> fmt::Debug for GcHeapOutOfMemory<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
+impl<T> std::fmt::Debug for GcHeapOutOfMemory<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
     }
 }
 
-impl<T> fmt::Display for GcHeapOutOfMemory<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<T> std::fmt::Display for GcHeapOutOfMemory<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "GC heap out of memory")
     }
 }
 
-#[cfg(feature = "std")]
 impl<T> std::error::Error for GcHeapOutOfMemory<T> {}
 
 impl<T> GcHeapOutOfMemory<T> {

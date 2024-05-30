@@ -220,7 +220,7 @@ impl Assembler {
     }
 
     fn emit(&mut self, inst: Inst) {
-        inst.emit(&mut self.buffer, &self.emit_info, &mut self.emit_state);
+        inst.emit(&[], &mut self.buffer, &self.emit_info, &mut self.emit_state);
     }
 
     fn to_synthetic_amode(
@@ -1186,7 +1186,7 @@ impl Assembler {
         });
     }
 
-    /// Minimum for src and dst XMM registers with results put in dst.
+    /// Mininum for src and dst XMM registers with results put in dst.
     pub fn xmm_min_seq(&mut self, src: Reg, dst: Reg, size: OperandSize) {
         self.emit(Inst::XmmMinMaxSeq {
             size: size.into(),

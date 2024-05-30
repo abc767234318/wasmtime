@@ -10,7 +10,7 @@ use std::{
     },
 };
 use wasmtime::component::{InstancePre, Linker};
-use wasmtime::{Config, Engine, Memory, MemoryType, Store, StoreLimits};
+use wasmtime::{Engine, Store, StoreLimits};
 use wasmtime_wasi::{StreamError, StreamResult, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::io::TokioIo;
 use wasmtime_wasi_http::{
@@ -77,7 +77,7 @@ impl ServeCommand {
     pub fn execute(mut self) -> Result<()> {
         self.run.common.init_logging()?;
 
-        // We force cli errors before starting to listen for connections so then we don't
+        // We force cli errors before starting to listen for connections so tha we don't
         // accidentally delay them to the first request.
         if self.run.common.wasi.nn == Some(true) {
             #[cfg(not(feature = "wasi-nn"))]
@@ -247,10 +247,23 @@ impl ServeCommand {
     async fn serve(mut self) -> Result<()> {
         use hyper::server::conn::http1;
 
-        let mut config = self
-            .run
-            .common
-            .config(None, use_pooling_allocator_by_default().unwrap_or(None))?;
+        let mut config = self.run.common.config(None)?;
+        match self.run.common.opts.pooling_allocator {
+            // If explicitly enabled on the CLI then the pooling allocator was
+            // already configured in the `config` method above. If the allocator
+            // is explicitly disabled, then we don't want it. In both cases do
+            // nothing.
+            Some(true) | Some(false) => {}
+
+            // Otherwise though if not explicitly specified then always enable
+            // the pooling allocator. The `wasmtime serve` use case is
+            // tailor-made for pooling allocation and there's no downside to
+            // enabling it.
+            None => {
+                let cfg = wasmtime::PoolingAllocationConfig::default();
+                config.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(cfg));
+            }
+        }
         config.wasm_component_model(true);
         config.async_support(true);
 
@@ -552,42 +565,4 @@ impl wasmtime_wasi::HostOutputStream for LogStream {
 #[async_trait::async_trait]
 impl wasmtime_wasi::Subscribe for LogStream {
     async fn ready(&mut self) {}
-}
-
-/// The pooling allocator is tailor made for the `wasmtime serve` use case, so
-/// try to use it when we can. The main cost of the pooling allocator, however,
-/// is the virtual memory required to run it. Not all systems support the same
-/// amount of virtual memory, for example some aarch64 and riscv64 configuration
-/// only support 39 bits of virtual address space.
-///
-/// The pooling allocator, by default, will request 1000 linear memories each
-/// sized at 6G per linear memory. This is 6T of virtual memory which ends up
-/// being about 42 bits of the address space. This exceeds the 39 bit limit of
-/// some systems, so there the pooling allocator will fail by default.
-///
-/// This function attempts to dynamically determine the hint for the pooling
-/// allocator. This returns `Some(true)` if the pooling allocator should be used
-/// by default, or `None` or an error otherwise.
-///
-/// The method for testing this is to allocate a 0-sized 64-bit linear memory
-/// with a maximum size that's N bits large where we force all memories to be
-/// static. This should attempt to acquire N bits of the virtual address space.
-/// If successful that should mean that the pooling allocator is OK to use, but
-/// if it fails then the pooling allocator is not used and the normal mmap-based
-/// implementation is used instead.
-fn use_pooling_allocator_by_default() -> Result<Option<bool>> {
-    const BITS_TO_TEST: u32 = 42;
-    let mut config = Config::new();
-    config.wasm_memory64(true);
-    config.static_memory_maximum_size(1 << BITS_TO_TEST);
-    let engine = Engine::new(&config)?;
-    let mut store = Store::new(&engine, ());
-    // NB: the maximum size is in wasm pages to take out the 16-bits of wasm
-    // page size here from the maximum size.
-    let ty = MemoryType::new64(0, Some(1 << (BITS_TO_TEST - 16)));
-    if Memory::new(&mut store, ty).is_ok() {
-        Ok(Some(true))
-    } else {
-        Ok(None)
-    }
 }

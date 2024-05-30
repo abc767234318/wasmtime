@@ -1,3 +1,4 @@
+use crate::isa::riscv64::inst::AllocationConsumer;
 use crate::isa::riscv64::lower::isle::generated_code::VecAluOpRRRR;
 use crate::isa::riscv64::lower::isle::generated_code::{
     VecAMode, VecAluOpRImm5, VecAluOpRR, VecAluOpRRImm5, VecAluOpRRR, VecAluOpRRRImm5, VecAvl,
@@ -248,6 +249,15 @@ impl VecOpMasking {
             VecOpMasking::Disabled => 1,
         }
     }
+
+    pub(crate) fn with_allocs(&self, allocs: &mut AllocationConsumer<'_>) -> Self {
+        match self {
+            VecOpMasking::Enabled { reg } => VecOpMasking::Enabled {
+                reg: allocs.next(*reg),
+            },
+            VecOpMasking::Disabled => VecOpMasking::Disabled,
+        }
+    }
 }
 
 impl VecAluOpRRRR {
@@ -268,16 +278,13 @@ impl VecAluOpRRRR {
             VecAluOpRRRR::VfnmaccVV | VecAluOpRRRR::VfnmaccVF => 0b101101,
             VecAluOpRRRR::VfmsacVV | VecAluOpRRRR::VfmsacVF => 0b101110,
             VecAluOpRRRR::VfnmsacVV | VecAluOpRRRR::VfnmsacVF => 0b101111,
-            VecAluOpRRRR::Vslide1upVX => 0b001110,
         }
     }
 
     pub fn category(&self) -> VecOpCategory {
         match self {
             VecAluOpRRRR::VmaccVV | VecAluOpRRRR::VnmsacVV => VecOpCategory::OPMVV,
-            VecAluOpRRRR::VmaccVX | VecAluOpRRRR::VnmsacVX | VecAluOpRRRR::Vslide1upVX => {
-                VecOpCategory::OPMVX
-            }
+            VecAluOpRRRR::VmaccVX | VecAluOpRRRR::VnmsacVX => VecOpCategory::OPMVX,
             VecAluOpRRRR::VfmaccVV
             | VecAluOpRRRR::VfnmaccVV
             | VecAluOpRRRR::VfmsacVV
@@ -302,10 +309,7 @@ impl VecAluOpRRRR {
 
 impl VecInstOverlapInfo for VecAluOpRRRR {
     fn forbids_src_dst_overlaps(&self) -> bool {
-        match self {
-            VecAluOpRRRR::Vslide1upVX => true,
-            _ => false,
-        }
+        false
     }
 }
 
@@ -1069,6 +1073,14 @@ impl VecAMode {
     pub fn get_operands(&mut self, collector: &mut impl OperandVisitor) {
         match self {
             VecAMode::UnitStride { base, .. } => base.get_operands(collector),
+        }
+    }
+
+    pub(crate) fn with_allocs(self, allocs: &mut AllocationConsumer<'_>) -> Self {
+        match self {
+            VecAMode::UnitStride { base } => VecAMode::UnitStride {
+                base: base.with_allocs(allocs),
+            },
         }
     }
 

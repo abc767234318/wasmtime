@@ -2,7 +2,7 @@ use super::{
     index_allocator::{SimpleIndexAllocator, SlotId},
     round_up_to_pow2, TableAllocationIndex,
 };
-use crate::runtime::vm::sys::vm::commit_pages;
+use crate::runtime::vm::sys::vm::{commit_table_pages, decommit_table_pages};
 use crate::runtime::vm::{
     InstanceAllocationRequest, Mmap, PoolingInstanceAllocatorConfig, SendSyncPtr, Table,
 };
@@ -95,7 +95,6 @@ impl TablePool {
     }
 
     /// Are there zero slots in use right now?
-    #[allow(unused)] // some cfgs don't use this
     pub fn is_empty(&self) -> bool {
         self.index_allocator.is_empty()
     }
@@ -123,14 +122,17 @@ impl TablePool {
             .alloc()
             .map(|slot| TableAllocationIndex(slot.0))
             .ok_or_else(|| {
-                super::PoolConcurrencyLimitError::new(self.max_total_tables, "tables")
+                anyhow!(
+                    "maximum concurrent table limit of {} reached",
+                    self.max_total_tables
+                )
             })?;
 
         match (|| {
             let base = self.get(allocation_index);
 
             unsafe {
-                commit_pages(
+                commit_table_pages(
                     base as *mut u8,
                     self.table_elements * mem::size_of::<*mut u8>(),
                 )?;
@@ -164,45 +166,31 @@ impl TablePool {
     /// The table must have been previously-allocated by this pool and assigned
     /// the given allocation index, it must currently be allocated, and it must
     /// never be used again.
-    ///
-    /// The caller must have already called `reset_table_pages_to_zero` on the
-    /// memory and flushed any enqueued decommits for this table's memory.
     pub unsafe fn deallocate(&self, allocation_index: TableAllocationIndex, table: Table) {
         assert!(table.is_static());
-        drop(table);
-        self.index_allocator.free(SlotId(allocation_index.0));
-    }
-
-    /// Reset the given table's memory to zero.
-    ///
-    /// Invokes the given `decommit` function for each region of memory that
-    /// needs to be decommitted. It is the caller's responsibility to actually
-    /// perform that decommit before this table is reused.
-    ///
-    /// # Safety
-    ///
-    /// This table must not be in active use, and ready for returning to the
-    /// table pool once it is zeroed and decommitted.
-    pub unsafe fn reset_table_pages_to_zero(
-        &self,
-        allocation_index: TableAllocationIndex,
-        table: &mut Table,
-        mut decommit: impl FnMut(*mut u8, usize),
-    ) {
-        assert!(table.is_static());
-        let base = self.get(allocation_index);
 
         let size = round_up_to_pow2(
             table.size() as usize * mem::size_of::<*mut u8>(),
             self.page_size,
         );
 
-        // `memset` the first `keep_resident` bytes.
-        let size_to_memset = size.min(self.keep_resident);
-        std::ptr::write_bytes(base, 0, size_to_memset);
+        drop(table);
 
-        // And decommit the rest of it.
-        decommit(base.add(size_to_memset), size - size_to_memset)
+        let base = self.get(allocation_index);
+        self.reset_table_pages_to_zero(base, size)
+            .expect("failed to decommit table pages");
+
+        self.index_allocator.free(SlotId(allocation_index.0));
+    }
+
+    fn reset_table_pages_to_zero(&self, base: *mut u8, size: usize) -> Result<()> {
+        let size_to_memset = size.min(self.keep_resident);
+        unsafe {
+            std::ptr::write_bytes(base, 0, size_to_memset);
+            decommit_table_pages(base.add(size_to_memset), size - size_to_memset)
+                .context("failed to decommit table page")?;
+        }
+        Ok(())
     }
 }
 
@@ -218,7 +206,7 @@ mod tests {
             limits: InstanceLimits {
                 total_tables: 7,
                 table_elements: 100,
-                max_memory_size: 0,
+                memory_pages: 0,
                 max_memories_per_module: 0,
                 ..Default::default()
             },

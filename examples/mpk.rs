@@ -66,7 +66,7 @@ struct Args {
     /// The maximum number of bytes for each WebAssembly linear memory in the
     /// pool.
     #[arg(long, default_value = "128MiB", value_parser = parse_byte_size)]
-    memory_size: usize,
+    memory_size: u64,
 
     /// The maximum number of bytes a memory is considered static; see
     /// `Config::static_memory_maximum_size` for more details and the default
@@ -186,7 +186,8 @@ impl ExponentialSearch {
 fn build_engine(args: &Args, num_memories: u32, enable_mpk: MpkEnabled) -> Result<usize> {
     // Configure the memory pool.
     let mut pool = PoolingAllocationConfig::default();
-    pool.max_memory_size(args.memory_size);
+    let memory_pages = args.memory_size / u64::from(wasmtime_environ::WASM_PAGE_SIZE);
+    pool.memory_pages(memory_pages);
     pool.total_memories(num_memories)
         .memory_protection_keys(enable_mpk);
 

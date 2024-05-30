@@ -8,7 +8,7 @@
 //! For more information about this see `./examples/min-platform` as well as
 //! `./docs/examples-minimal.md`.
 
-use anyhow::{bail, Result};
+use std::io;
 
 pub mod capi;
 pub mod mmap;
@@ -16,19 +16,9 @@ pub mod traphandlers;
 pub mod unwind;
 pub mod vm;
 
-fn cvt(rc: i32) -> Result<()> {
+fn cvt(rc: i32) -> io::Result<()> {
     match rc {
         0 => Ok(()),
-        code => bail!("os error {code}"),
+        code => Err(io::Error::from_raw_os_error(code)),
     }
-}
-
-#[inline]
-pub fn tls_get() -> *mut u8 {
-    unsafe { capi::wasmtime_tls_get() }
-}
-
-#[inline]
-pub fn tls_set(ptr: *mut u8) {
-    unsafe { capi::wasmtime_tls_set(ptr) }
 }

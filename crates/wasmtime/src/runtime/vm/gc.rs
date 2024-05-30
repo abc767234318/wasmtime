@@ -1,3 +1,5 @@
+use std::{any::Any, num::NonZeroUsize};
+
 #[cfg(feature = "gc")]
 mod enabled;
 #[cfg(feature = "gc")]
@@ -18,11 +20,8 @@ pub use gc_runtime::*;
 pub use host_data::*;
 pub use i31::*;
 
-use crate::prelude::*;
 use crate::runtime::vm::GcHeapAllocationIndex;
 use anyhow::{bail, Result};
-use core::ptr;
-use core::{any::Any, num::NonZeroUsize};
 use wasmtime_environ::StackMap;
 
 /// Used by the runtime to lookup information about a module given a
@@ -231,13 +230,13 @@ pub fn disabled_gc_heap() -> Box<dyn GcHeap> {
             }
         }
         unsafe fn vmctx_gc_heap_base(&self) -> *mut u8 {
-            ptr::null_mut()
+            std::ptr::null_mut()
         }
         unsafe fn vmctx_gc_heap_bound(&self) -> usize {
             0
         }
         unsafe fn vmctx_gc_heap_data(&self) -> *mut u8 {
-            ptr::null_mut()
+            std::ptr::null_mut()
         }
         #[cfg(feature = "pooling-allocator")]
         fn reset(&mut self) {}

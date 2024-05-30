@@ -39,8 +39,8 @@
 //!         |                          by instruction emission code.
 //!         |                        - prologue and epilogue(s) built and emitted
 //!         |                          directly during emission.
-//!         |                        - SP-relative offsets resolved by tracking
-//!         |                          EmitState.)
+//!         |                        - nominal-SP-relative offsets resolved
+//!         |                          by tracking EmitState.)
 //!
 //! ```
 
@@ -56,7 +56,7 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 use cranelift_control::ControlPlane;
 use cranelift_entity::PrimaryMap;
-use regalloc2::VReg;
+use regalloc2::{Allocation, VReg};
 use smallvec::{smallvec, SmallVec};
 use std::string::String;
 
@@ -287,9 +287,15 @@ pub trait MachInstEmit: MachInst {
     /// Constant information used in `emit` invocations.
     type Info;
     /// Emit the instruction.
-    fn emit(&self, code: &mut MachBuffer<Self>, info: &Self::Info, state: &mut Self::State);
+    fn emit(
+        &self,
+        allocs: &[Allocation],
+        code: &mut MachBuffer<Self>,
+        info: &Self::Info,
+        state: &mut Self::State,
+    );
     /// Pretty-print the instruction.
-    fn pretty_print_inst(&self, state: &mut Self::State) -> String;
+    fn pretty_print_inst(&self, allocs: &[Allocation], state: &mut Self::State) -> String;
 }
 
 /// A trait describing the emission state carried between MachInsts when
@@ -311,8 +317,6 @@ pub trait MachInstEmitState<I: VCodeInst>: Default + Clone + Debug {
     /// A hook that triggers when first emitting a new block.
     /// It is guaranteed to be called before any instructions are emitted.
     fn on_new_block(&mut self) {}
-    /// The [`FrameLayout`] for the function currently being compiled.
-    fn frame_layout(&self) -> &FrameLayout;
 }
 
 /// The result of a `MachBackend::compile_function()` call. Contains machine

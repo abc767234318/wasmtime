@@ -1,5 +1,3 @@
-use crate::prelude::*;
-
 /// A `Box<T>` lookalike for memory that's stored in a `Store<T>`
 ///
 /// This is intended to be quite similar to a `Box<T>` except without the

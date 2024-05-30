@@ -1,5 +1,4 @@
 use crate::runtime::vm::{GcHeap, GcStore, VMGcRef};
-use core::fmt;
 use wasmtime_environ::VMGcKind;
 
 /// A `VMGcRef` that we know points to an `externref`.
@@ -15,9 +14,9 @@ use wasmtime_environ::VMGcKind;
 #[repr(transparent)]
 pub struct VMExternRef(VMGcRef);
 
-impl fmt::Pointer for VMExternRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Pointer::fmt(&self.0, f)
+impl std::fmt::Pointer for VMExternRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Pointer::fmt(&self.0, f)
     }
 }
 
