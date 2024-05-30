@@ -911,7 +911,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
          * Wasm specifies an integer alignment flag but we drop it in Cranelift.
          * The memory base address is provided by the environment.
          ************************************************************************************/
-        Operator::I32Store { memarg }
+        Operator::I32Store { memarg }    // wasmtime cli貌似每次运行的都会有个cache，记录之前这个binary的执行情况，如果有cache且此binary之前memory overflow了，那可能就不会走这一步了
         | Operator::I64Store { memarg }
         | Operator::F32Store { memarg }
         | Operator::F64Store { memarg } => {

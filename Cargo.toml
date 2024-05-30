@@ -330,7 +330,7 @@ default = [
   "wat",
 #  "parallel-compilation",   这里我把并行编译关闭了，因为这会导致调试时，断点不准确
   "pooling-allocator",
-  "cache",
+#  "cache",    这里我把cache关闭了，容易导致程序不完整执行
   "logging",
   "demangle",
   "cranelift",
