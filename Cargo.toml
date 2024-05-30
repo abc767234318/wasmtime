@@ -19,6 +19,7 @@ workspace = true
 [lib]
 doctest = false
 
+# 定义入口函数所在文件，这里是src/bin/wasmtime.rs的main函数
 [[bin]]
 name = "wasmtime"
 path = "src/bin/wasmtime.rs"
@@ -327,7 +328,7 @@ default = [
 
   # Most features of Wasmtime are enabled by default.
   "wat",
-  "parallel-compilation",
+#  "parallel-compilation",   这里我把并行编译关闭了，因为这会导致调试时，断点不准确
   "pooling-allocator",
   "cache",
   "logging",
@@ -348,7 +349,7 @@ default = [
 
   # By default include compatibility with the "old" CLI from Wasmtime 13 and
   # prior.
-  "old-cli",
+#  "old-cli",
 ]
 
 # ========================================

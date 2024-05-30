@@ -225,16 +225,17 @@ impl RunCommon {
             Some(Precompiled::Component) => {
                 bail!("support for components was not enabled at compile time");
             }
+            // 前面的是检测module是否被precompile了，然后一般来说wasm文件会走下面的None部分。将wasm文件compile
             #[cfg(any(feature = "cranelift", feature = "winch"))]
             None => {
                 // Parse the text format here specifically to add the `path` to
                 // the error message if there's a syntax error.
-                #[cfg(feature = "wat")]
+                #[cfg(feature = "wat")]   // 这里有个将bytes转成wat的过程，但是貌似默认不开启
                 let bytes = wat::parse_bytes(bytes).map_err(|mut e| {
                     e.set_path(path);
                     e
                 })?;
-                if wasmparser::Parser::is_component(&bytes) {
+                if wasmparser::Parser::is_component(&bytes) {  // 判断是否是component wasm
                     #[cfg(feature = "component-model")]
                     {
                         self.ensure_allow_components()?;
@@ -247,7 +248,7 @@ impl RunCommon {
                     {
                         bail!("support for components was not enabled at compile time");
                     }
-                } else {
+                } else { // 编译core wasm
                     let module = wasmtime::CodeBuilder::new(engine)
                         .wasm(&bytes, Some(path))?
                         .compile_module()?;

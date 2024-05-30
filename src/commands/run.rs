@@ -69,6 +69,8 @@ enum CliLinker {
     Component(wasmtime::component::Linker<Host>),
 }
 
+
+// 这里是run命令的入口实现，execute里根据config创建engine，然后读取wasm文件
 impl RunCommand {
     /// Executes the command.
     pub fn execute(mut self) -> Result<()> {
@@ -104,6 +106,7 @@ impl RunCommand {
             }
         }
 
+        // 这里区分出了core和component模式的linker
         let mut linker = match &main {
             RunTarget::Core(_) => CliLinker::Core(wasmtime::Linker::new(&engine)),
             #[cfg(feature = "component-model")]
@@ -125,22 +128,24 @@ impl RunCommand {
 
         let host = Host::default();
         let mut store = Store::new(&engine, host);
-        self.populate_with_wasi(&mut linker, &mut store, &main)?;
+        self.populate_with_wasi(&mut linker, &mut store, &main)?; // populate 填充
 
-        store.data_mut().limits = self.run.store_limits();
+        store.data_mut().limits = self.run.store_limits(); //这里有个limits限制memory table等等的数量
         store.limiter(|t| &mut t.limits);
 
         // If fuel has been configured, we want to add the configured
-        // fuel amount to this store.
+        // fuel amount to this store.   fuel 燃料
         if let Some(fuel) = self.run.common.wasm.fuel {
             store.set_fuel(fuel)?;
         }
 
         // Load the preload wasm modules.
         let mut modules = Vec::new();
+        // 如果runTarget是core，那么直接push到modules里
         if let RunTarget::Core(m) = &main {
             modules.push((String::new(), m.clone()));
         }
+        // 这里这个循环如果是core target的话不会执行，因为这里是加载那些preload的modules
         for (name, path) in self.preloads.iter() {
             // Read the wasm module binary either as `*.wat` or a raw binary
             let module = match self.run.load_module(&engine, path)? {
@@ -179,6 +184,7 @@ impl RunCommand {
         // The goal of this is to improve the performance of WASI-related
         // operations that block in the CLI since the CLI doesn't use async to
         // invoke WebAssembly.
+        // 这里是真正执行wasm的地方
         let result = wasmtime_wasi::runtime::with_ambient_tokio_runtime(|| {
             self.load_main_module(&mut store, &mut linker, &main, modules)
                 .with_context(|| {

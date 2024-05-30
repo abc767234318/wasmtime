@@ -74,7 +74,7 @@ impl FuncTranslator {
         )
     }
 
-    /// Translate a binary WebAssembly function from a `FunctionBody`.
+    /// Translate a binary WebAssembly function from a `FunctionBody`.   这个应该是具体的translate部分
     pub fn translate_body<FE: FuncEnvironment + ?Sized>(
         &mut self,
         validator: &mut FuncValidator<impl WasmModuleResources>,
@@ -82,40 +82,53 @@ impl FuncTranslator {
         func: &mut ir::Function,
         environ: &mut FE,
     ) -> WasmResult<()> {
-        let _tt = timing::wasm_translate_function();
-        let mut reader = body.get_binary_reader();
+        let _tt = timing::wasm_translate_function();  // 计时的一个宏
+        let mut reader = body.get_binary_reader();  // 从FunctionBody中获取reader
         log::trace!(
             "translate({} bytes, {}{})",
             reader.bytes_remaining(),
             func.name,
             func.signature
         );
+        println!(
+            "translate({} bytes, {}{})",
+            reader.bytes_remaining(),
+            func.name,
+            func.signature
+        );
+        println!("{}", format!("{:?}", body));    // 这里把funcbody的二进制打出来是能在wasm binary中找到对应的函数部分的。这里打出来的是10进制的，并不是16进制
         debug_assert_eq!(func.dfg.num_blocks(), 0, "Function must be empty");
         debug_assert_eq!(func.dfg.num_insts(), 0, "Function must be empty");
 
         let mut builder = FunctionBuilder::new(func, &mut self.func_ctx);
         builder.set_srcloc(cur_srcloc(&reader));
-        let entry_block = builder.create_block();
-        builder.append_block_params_for_function_params(entry_block);
-        builder.switch_to_block(entry_block);
+        let entry_block = builder.create_block();   // 对每个函数先创建一个入口block
+        builder.append_block_params_for_function_params(entry_block);   // 第一个block的参数是函数的参数
+        builder.switch_to_block(entry_block);   // 这行和下面一行还不太懂，但是感觉无关紧要
         builder.seal_block(entry_block); // Declare all predecessors known.
 
         // Make sure the entry block is inserted in the layout before we make any callbacks to
         // `environ`. The callback functions may need to insert things in the entry block.
         builder.ensure_inserted_block();
 
-        let num_params = declare_wasm_parameters(&mut builder, entry_block, environ);
+        let num_params = declare_wasm_parameters(&mut builder, entry_block, environ); // 为函数的参数声明local变量，因为wasm的参数放到local变量的最前
+
+        println!("1===========\n{}", builder.func.display());  // 这句话可以用来调试，打印当前的IR
 
         // Set up the translation state with a single pushed control block representing the whole
-        // function and its return values.
+        // function and its return values.   // 后面这三行创建return 块，貌似每个函数都有一个块专门用于返回参数
         let exit_block = builder.create_block();
         builder.append_block_params_for_function_returns(exit_block);
         self.state.initialize(&builder.func.signature, exit_block);
 
+        println!("2===========\n{}", builder.func.display());  // 这句话可以用来调试，打印当前的IR
+
         parse_local_decls(&mut reader, &mut builder, num_params, environ, validator)?;
+        println!("3===========\n{}", builder.func.display());
         parse_function_body(validator, reader, &mut builder, &mut self.state, environ)?;
 
         builder.finalize();
+        println!("4===========\n{}", func.display());
         log::trace!("translated Wasm to CLIF:\n{}", func.display());
         Ok(())
     }
@@ -261,7 +274,7 @@ fn parse_function_body<FE: FuncEnvironment + ?Sized>(
         let op = reader.read_operator()?;
         validator.op(pos, &op)?;
         environ.before_translate_operator(&op, builder, state)?;
-        translate_operator(validator, &op, builder, state, environ)?;
+        translate_operator(validator, &op, builder, state, environ)?;   // 这里是逐个指令进行翻译
         environ.after_translate_operator(&op, builder, state)?;
     }
     environ.after_translate_function(builder, state)?;

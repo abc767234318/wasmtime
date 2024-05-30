@@ -9,23 +9,23 @@ use std::sync::Arc;
 use wasmtime_environ::{FinishedObject, ObjectBuilder, ObjectKind};
 
 impl<'a> CodeBuilder<'a> {
-    fn compile_cached<T>(
+    fn compile_cached<T>(   // 可以看到这个build_artifacts参数是个函数
         &self,
         build_artifacts: fn(&Engine, &[u8], Option<&[u8]>) -> Result<(MmapVecWrapper, Option<T>)>,
     ) -> Result<(Arc<CodeMemory>, Option<T>)> {
-        let wasm = self.wasm_binary()?;
+        let wasm = self.wasm_binary()?;   // wasm这里是wasm 的bytes
         let dwarf_package = self.dwarf_package_binary();
 
-        self.engine
+        self.engine   // 检查编译设置是否与本机主机兼容
             .check_compatible_with_native_host()
             .context("compilation settings are not compatible with the native host")?;
 
         #[cfg(feature = "cache")]
         {
-            let state = (
-                HashedEngineCompileEnv(self.engine),
+            let state = (  // 这是个元组，包含四个不同类型的元素。rust中元组的元素类型可以互不相同
+                HashedEngineCompileEnv(self.engine), // 用于存储编译环境信息的结构体
                 &wasm,
-                &dwarf_package,
+                &dwarf_package,    // 一个包含了DWARF调试信息的变量
                 // Don't hash this as it's just its own "pure" function pointer.
                 NotHashed(build_artifacts),
             );
@@ -79,7 +79,8 @@ impl<'a> CodeBuilder<'a> {
     /// Note that this method will cache compilations if the `cache` feature is
     /// enabled and turned on in [`Config`](crate::Config).
     #[cfg_attr(docsrs, doc(cfg(feature = "runtime")))]
-    pub fn compile_module(&self) -> Result<Module> {
+    pub fn compile_module(&self) -> Result<Module> {   // 编译wasm
+        // 这个build_artifacts是个函数
         let (code, info_and_types) = self.compile_cached(super::build_artifacts)?;
         Module::from_parts(self.engine, code, info_and_types)
     }

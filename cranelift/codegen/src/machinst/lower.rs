@@ -991,7 +991,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
         opt_inst
     }
 
-    /// Lower the function.
+    /// Lower the function.   // IR 到 native code的compile
     pub fn lower<B: LowerBackend<MInst = I>>(
         mut self,
         backend: &B,

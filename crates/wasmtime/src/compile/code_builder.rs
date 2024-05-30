@@ -36,7 +36,7 @@ use std::path::Path;
 /// [`compile_module`]: CodeBuilder::compile_module
 /// [`wasm`]: CodeBuilder::wasm
 /// [`wasm_file`]: CodeBuilder::wasm_file
-pub struct CodeBuilder<'a> {
+pub struct CodeBuilder<'a> {   //编译wasm的类
     pub(super) engine: &'a Engine,
     wasm: Option<Cow<'a, [u8]>>,
     wasm_path: Option<Cow<'a, Path>>,

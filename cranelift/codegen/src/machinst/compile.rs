@@ -12,7 +12,7 @@ use crate::CodegenError;
 use regalloc2::RegallocOptions;
 
 /// Compile the given function down to VCode with allocated registers, ready
-/// for binary emission.
+/// for binary emission.   // IR 到 native code
 pub fn compile<B: LowerBackend + TargetIsa>(
     f: &Function,
     domtree: &DominatorTree,

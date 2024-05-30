@@ -122,7 +122,7 @@ impl Compiler {
 }
 
 impl wasmtime_environ::Compiler for Compiler {
-    fn compile_function(
+    fn compile_function(  // 这个应该是真正编译函数的地方，因为下面调用了cranelift frontend的东西
         &self,
         translation: &ModuleTranslation<'_>,
         func_index: DefinedFuncIndex,
@@ -222,8 +222,8 @@ impl wasmtime_environ::Compiler for Compiler {
             &mut context.func,
             &mut func_env,
         )?;
-
-        if let Some(path) = &self.clif_dir {
+        // 这里IR就转换完了，剩下就是编译IR to native了
+        if let Some(path) = &self.clif_dir {   // 这里把ir放到文件里
             use std::io::Write;
 
             let mut path = path.to_path_buf();
@@ -233,10 +233,10 @@ impl wasmtime_environ::Compiler for Compiler {
             let mut output = std::fs::File::create(path).unwrap();
             write!(output, "{}", context.func.display()).unwrap();
         }
-
+        // 下面这句是IR 到native的compile
         let (info, func) = compiler.finish_with_info(Some((&body, &self.tunables)))?;
 
-        let timing = cranelift_codegen::timing::take_current();
+        let timing = cranelift_codegen::timing::take_current();   // 计时，统计效率
         log::debug!("{:?} translated in {:?}", func_index, timing.total());
         log::trace!("{:?} timing info\n{}", func_index, timing);
 

@@ -113,7 +113,7 @@ macro_rules! unwrap_or_return_unreachable_state {
     };
 }
 
-/// Translates wasm operators into Cranelift IR instructions.
+/// Translates wasm operators into Cranelift IR instructions.   // 逐个指令进行compile，转成cranelift ir
 pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
     validator: &mut FuncValidator<impl WasmModuleResources>,
     op: &Operator,

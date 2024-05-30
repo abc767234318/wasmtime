@@ -115,6 +115,7 @@ impl Wasmtime {
     }
 }
 
+// 项目的入口函数
 fn main() -> Result<()> {
     #[cfg(feature = "old-cli")]
     return old_cli::main();

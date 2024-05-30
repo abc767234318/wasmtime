@@ -59,6 +59,8 @@ pub use self::runtime::finish_object;
 /// Additionally compilation returns an `Option` here which is always
 /// `Some`, notably compiled metadata about the module in addition to the
 /// type information found within.
+///
+/// 后端编译过程真正发生的地方
 pub(crate) fn build_artifacts<T: FinishedObject>(
     engine: &Engine,
     wasm: &[u8],
@@ -70,12 +72,12 @@ pub(crate) fn build_artifacts<T: FinishedObject>(
     // about the wasm module. This is where the WebAssembly is parsed and
     // validated. Afterwards `types` will have all the type information for
     // this module.
-    let parser = wasmparser::Parser::new(0);
+    let parser = wasmparser::Parser::new(0);   // 这里这个parser用来解析wasm binary
     let mut validator = wasmparser::Validator::new_with_features(engine.config().features.clone());
     let mut types = ModuleTypesBuilder::new(&validator);
     let mut translation = ModuleEnvironment::new(tunables, &mut validator, &mut types)
         .translate(parser, wasm)
-        .context("failed to parse WebAssembly module")?;
+        .context("failed to parse WebAssembly module")?;    // 这里就将wasm bytes转成memory object了
     let functions = mem::take(&mut translation.function_body_inputs);
 
     let compile_inputs = CompileInputs::for_module(&types, &translation, functions);
@@ -83,7 +85,7 @@ pub(crate) fn build_artifacts<T: FinishedObject>(
     let (compiled_funcs, function_indices) = unlinked_compile_outputs.pre_link();
 
     // Emplace all compiled functions into the object file with any other
-    // sections associated with code as well.
+    // sections associated with code as well.   // 这句话创建一个obj文件
     let mut object = engine.compiler().object(ObjectKind::Module)?;
     // Insert `Engine` and type-level information into the compiled
     // artifact so if this module is deserialized later it contains all
@@ -93,7 +95,7 @@ pub(crate) fn build_artifacts<T: FinishedObject>(
     // can both be skipped if this module will never get serialized.
     // They're only used during deserialization and not during runtime for
     // the module itself. Currently there's no need for that, however, so
-    // it's left as an exercise for later.
+    // it's left as an exercise for later.   // 这两句貌似用处不大
     engine.append_compiler_info(&mut object);
     engine.append_bti(&mut object);
 
@@ -430,7 +432,7 @@ impl<'a> CompileInputs<'a> {
         >,
     ) {
         let mut sigs = BTreeSet::new();
-
+        // 这里应该是循环每个function并编译
         for (module, translation, functions) in translations {
             for (def_func_index, func_body) in functions {
                 self.push_input(move |compiler| {
@@ -448,7 +450,10 @@ impl<'a> CompileInputs<'a> {
                         info: Some(info),
                     })
                 });
-
+                // 这里需要解释一下trampoline。它的主要目的是在调用另一个函数之前进行一些额外的操作。
+                // 在这个上下文中，"native_trampoline"可能是一个在调用WebAssembly函数之前进行一些准备工作的函数，例如设置正确的调用约定或进行必要的参数转换。
+                // 具体来说，"wasm_to_native_trampoline"是一个从WebAssembly函数跳转到本地（native）函数的trampoline。
+                // 这个trampoline函数的作用是处理从WebAssembly环境到本地代码环境的转换，包括参数和返回值的转换，以及可能的调用约定的转换。
                 let func_index = translation.module.func_index(def_func_index);
                 if translation.module.functions[func_index].is_escaping() {
                     self.push_input(move |compiler| {
@@ -516,7 +521,7 @@ impl<'a> CompileInputs<'a> {
     /// resulting `UnlinkedCompileOutput`s.
     fn compile(self, engine: &Engine) -> Result<UnlinkedCompileOutputs> {
         let compiler = engine.compiler();
-
+        // 下面这句话是调用到后端cranelift编译的
         // Compile each individual input in parallel.
         let mut raw_outputs = engine.run_maybe_parallel(self.inputs, |f| f(compiler))?;
 
