@@ -63,8 +63,7 @@ impl WasiHttpView for Ctx {
     ) -> HttpResult<HostFutureIncomingResponse> {
         if let Some(rejected_authority) = &self.rejected_authority {
             let authority = request.uri().authority().map(ToString::to_string).unwrap();
-            let (auth, _port) = authority.split_once(':').unwrap();
-            if auth == rejected_authority {
+            if &authority == rejected_authority {
                 return Err(ErrorCode::HttpRequestDenied.into());
             }
         }
@@ -524,6 +523,27 @@ async fn do_wasi_http_echo(uri: &str, url_header: Option<&str>) -> Result<()> {
             received.len()
         );
     }
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+// test uses TLS but riscv/s390x don't support that yet
+#[cfg_attr(any(target_arch = "riscv64", target_arch = "s390x"), ignore)]
+async fn wasi_http_without_port() -> Result<()> {
+    let req = hyper::Request::builder()
+        .method(http::Method::GET)
+        .uri("https://httpbin.org/get");
+
+    let response = run_wasi_http(
+        test_programs_artifacts::API_PROXY_FORWARD_REQUEST_COMPONENT,
+        req.body(body::empty())?,
+        None,
+        None,
+    )
+    .await??;
+
+    assert_eq!(response.status(), StatusCode::OK);
 
     Ok(())
 }

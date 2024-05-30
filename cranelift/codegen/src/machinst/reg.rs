@@ -4,9 +4,7 @@
 
 use alloc::{string::String, vec::Vec};
 use core::{fmt::Debug, hash::Hash};
-use regalloc2::{
-    Allocation, Operand, OperandConstraint, OperandKind, OperandPos, PReg, PRegSet, VReg,
-};
+use regalloc2::{Operand, OperandConstraint, OperandKind, OperandPos, PReg, PRegSet, VReg};
 
 #[cfg(feature = "enable-serde")]
 use serde_derive::{Deserialize, Serialize};
@@ -337,11 +335,8 @@ pub trait OperandVisitorImpl: OperandVisitor {
     /// Add a use of a fixed, nonallocatable physical register.
     fn reg_fixed_nonallocatable(&mut self, preg: PReg) {
         self.debug_assert_is_allocatable_preg(preg, false);
-        // Magic VReg which does not participate in register allocation.
-        let mut reg = Reg(VReg::new(VReg::MAX, preg.class()));
-        let constraint = OperandConstraint::FixedReg(preg);
-        // This operand won't be allocated, so kind and pos don't matter.
-        self.add_operand(&mut reg, constraint, OperandKind::Use, OperandPos::Early);
+        // Since this operand does not participate in register allocation,
+        // there's nothing to do here.
     }
 
     /// Add a register use, at the start of the instruction (`Before`
@@ -458,89 +453,27 @@ impl<'a, F: Fn(VReg) -> VReg> OperandVisitor for OperandCollector<'a, F> {
     }
 }
 
+impl<T: FnMut(&mut Reg, OperandConstraint, OperandKind, OperandPos)> OperandVisitor for T {
+    fn add_operand(
+        &mut self,
+        reg: &mut Reg,
+        constraint: OperandConstraint,
+        kind: OperandKind,
+        pos: OperandPos,
+    ) {
+        self(reg, constraint, kind, pos)
+    }
+}
+
 /// Pretty-print part of a disassembly, with knowledge of
 /// operand/instruction size, and optionally with regalloc
 /// results. This can be used, for example, to print either `rax` or
 /// `eax` for the register by those names on x86-64, depending on a
 /// 64- or 32-bit context.
 pub trait PrettyPrint {
-    fn pretty_print(&self, size_bytes: u8, allocs: &mut AllocationConsumer<'_>) -> String;
+    fn pretty_print(&self, size_bytes: u8) -> String;
 
     fn pretty_print_default(&self) -> String {
-        self.pretty_print(0, &mut AllocationConsumer::new(&[]))
-    }
-}
-
-/// A consumer of an (optional) list of Allocations along with Regs
-/// that provides RealRegs where available.
-///
-/// This is meant to be used during code emission or
-/// pretty-printing. In at least the latter case, regalloc results may
-/// or may not be available, so we may end up printing either vregs or
-/// rregs. Even pre-regalloc, though, some registers may be RealRegs
-/// that were provided when the instruction was created.
-///
-/// This struct should be used in a specific way: when matching on an
-/// instruction, provide it the Regs in the same order as they were
-/// provided to the OperandCollector.
-#[derive(Clone)]
-pub struct AllocationConsumer<'a> {
-    allocs: std::slice::Iter<'a, Allocation>,
-}
-
-impl<'a> AllocationConsumer<'a> {
-    pub fn new(allocs: &'a [Allocation]) -> Self {
-        Self {
-            allocs: allocs.iter(),
-        }
-    }
-
-    pub fn next_fixed_nonallocatable(&mut self, preg: PReg) {
-        let alloc = self.allocs.next();
-        let alloc = alloc.map(|alloc| {
-            Reg::from(
-                alloc
-                    .as_reg()
-                    .expect("Should not have gotten a stack allocation"),
-            )
-        });
-
-        match alloc {
-            Some(alloc) => {
-                assert_eq!(preg, alloc.to_real_reg().unwrap().into());
-            }
-            None => {}
-        }
-    }
-
-    pub fn next(&mut self, pre_regalloc_reg: Reg) -> Reg {
-        let alloc = self.allocs.next();
-        let alloc = alloc.map(|alloc| {
-            Reg::from(
-                alloc
-                    .as_reg()
-                    .expect("Should not have gotten a stack allocation"),
-            )
-        });
-
-        match (pre_regalloc_reg.to_real_reg(), alloc) {
-            (Some(rreg), None) => rreg.into(),
-            (Some(rreg), Some(alloc)) => {
-                debug_assert_eq!(Reg::from(rreg), alloc);
-                alloc
-            }
-            (None, Some(alloc)) => alloc,
-            _ => pre_regalloc_reg,
-        }
-    }
-
-    pub fn next_writable(&mut self, pre_regalloc_reg: Writable<Reg>) -> Writable<Reg> {
-        Writable::from_reg(self.next(pre_regalloc_reg.to_reg()))
-    }
-}
-
-impl<'a> std::default::Default for AllocationConsumer<'a> {
-    fn default() -> Self {
-        Self { allocs: [].iter() }
+        self.pretty_print(0)
     }
 }

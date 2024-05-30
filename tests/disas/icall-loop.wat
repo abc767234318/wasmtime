@@ -22,13 +22,13 @@
         end)
 )
 
-;; function u0:0(i64 vmctx, i64, i32) fast {
+;; function u0:0(i64 vmctx, i64, i32) tail {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1
 ;;     gv3 = vmctx
 ;;     gv4 = load.i64 notrap aligned readonly gv3+88
-;;     sig0 = (i64 vmctx, i64) -> i32 fast
+;;     sig0 = (i64 vmctx, i64) -> i32 tail
 ;;     sig1 = (i64 vmctx, i32 uext, i32 uext) -> i64 system_v
 ;;     fn0 = colocated u1:9 sig1
 ;;     stack_limit = gv2
@@ -61,7 +61,7 @@
 ;; @002b                               jump block5(v17)
 ;;
 ;;                                 block5(v14: i64):
-;; @002b                               v21 = load.i32 icall_null aligned readonly v14+24
+;; @002b                               v21 = load.i32 icall_null aligned readonly v14+16
 ;; @002b                               v22 = icmp eq v21, v20
 ;; @002b                               brif v22, block7, block6
 ;;
@@ -69,19 +69,19 @@
 ;; @002b                               trap bad_sig
 ;;
 ;;                                 block7:
-;; @002b                               v23 = load.i64 notrap aligned readonly v14+16
-;; @002b                               v24 = load.i64 notrap aligned readonly v14+32
+;; @002b                               v23 = load.i64 notrap aligned readonly v14+8
+;; @002b                               v24 = load.i64 notrap aligned readonly v14+24
 ;; @002b                               v25 = call_indirect sig0, v23(v24, v0)
 ;; @002e                               jump block2
 ;; }
 ;;
-;; function u0:1(i64 vmctx, i64) fast {
+;; function u0:1(i64 vmctx, i64) tail {
 ;;     gv0 = vmctx
 ;;     gv1 = load.i64 notrap aligned readonly gv0+8
 ;;     gv2 = load.i64 notrap aligned gv1
 ;;     gv3 = vmctx
 ;;     gv4 = load.i64 notrap aligned readonly gv3+88
-;;     sig0 = (i64 vmctx, i64) -> i32 fast
+;;     sig0 = (i64 vmctx, i64) -> i32 tail
 ;;     sig1 = (i64 vmctx, i32 uext, i32 uext) -> i64 system_v
 ;;     fn0 = colocated u1:9 sig1
 ;;     stack_limit = gv2
@@ -111,7 +111,7 @@
 ;; @0038                               jump block5(v16)
 ;;
 ;;                                 block5(v13: i64):
-;; @0038                               v20 = load.i32 icall_null aligned readonly v13+24
+;; @0038                               v20 = load.i32 icall_null aligned readonly v13+16
 ;; @0038                               v21 = icmp eq v20, v19
 ;; @0038                               brif v21, block7, block6
 ;;
@@ -119,8 +119,8 @@
 ;; @0038                               trap bad_sig
 ;;
 ;;                                 block7:
-;; @0038                               v22 = load.i64 notrap aligned readonly v13+16
-;; @0038                               v23 = load.i64 notrap aligned readonly v13+32
+;; @0038                               v22 = load.i64 notrap aligned readonly v13+8
+;; @0038                               v23 = load.i64 notrap aligned readonly v13+24
 ;; @0038                               v24 = call_indirect sig0, v22(v23, v0)
 ;; @003b                               jump block2
 ;; }

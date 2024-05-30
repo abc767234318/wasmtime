@@ -7,6 +7,7 @@ use cranelift_codegen::Context;
 use cranelift_reader::parse_sets_and_triple;
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::HashSet;
+use std::hash::{BuildHasher, BuildHasherDefault};
 use std::io::Write;
 use std::path::PathBuf;
 use std::{fs, io};
@@ -140,10 +141,8 @@ fn parse_input(path: PathBuf) -> Result<Vec<Function>> {
     Ok(funcs)
 }
 
-/// A convenience functon for a quick usize hash
+/// A convenience function for a quick usize hash
 #[inline]
 pub fn hash<T: std::hash::Hash + ?Sized>(v: &T) -> usize {
-    let mut state = rustc_hash::FxHasher::default();
-    v.hash(&mut state);
-    std::hash::Hasher::finish(&state) as usize
+    BuildHasherDefault::<rustc_hash::FxHasher>::default().hash_one(v) as usize
 }

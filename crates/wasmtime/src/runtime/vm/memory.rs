@@ -2,21 +2,21 @@
 //!
 //! `RuntimeLinearMemory` is to WebAssembly linear memories what `Table` is to WebAssembly tables.
 
+use crate::prelude::*;
 use crate::runtime::vm::mmap::Mmap;
 use crate::runtime::vm::vmcontext::VMMemoryDefinition;
 use crate::runtime::vm::{
     MemoryImage, MemoryImageSlot, SendSyncPtr, SharedMemory, Store, WaitResult,
 };
+use alloc::sync::Arc;
 use anyhow::Error;
 use anyhow::{bail, format_err, Result};
-use std::ops::Range;
-use std::ptr::NonNull;
-use std::sync::Arc;
-use std::time::Instant;
-use wasmtime_environ::{MemoryPlan, MemoryStyle, Trap, WASM32_MAX_PAGES, WASM64_MAX_PAGES};
+use core::ops::Range;
+use core::ptr::NonNull;
+use core::time::Duration;
+use wasmtime_environ::{MemoryPlan, MemoryStyle, Trap, WASM32_MAX_SIZE, WASM64_MAX_SIZE};
 
 const WASM_PAGE_SIZE: usize = wasmtime_environ::WASM_PAGE_SIZE as usize;
-const WASM_PAGE_SIZE_U64: u64 = wasmtime_environ::WASM_PAGE_SIZE as u64;
 
 /// A memory allocator
 pub trait RuntimeMemoryCreator: Send + Sync {
@@ -152,7 +152,7 @@ pub trait RuntimeLinearMemory: Send + Sync {
     fn needs_init(&self) -> bool;
 
     /// Used for optional dynamic downcasting.
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any;
 
     /// Returns the range of addresses that may be reached by WebAssembly.
     ///
@@ -218,10 +218,9 @@ impl MmapMemory {
             // Note that the `maximum` is adjusted here to whatever the smaller
             // of the two is, the `maximum` given or the `bound` specified for
             // this memory.
-            MemoryStyle::Static { bound } => {
-                assert!(bound >= plan.memory.minimum);
-                let bound_bytes =
-                    usize::try_from(bound.checked_mul(WASM_PAGE_SIZE_U64).unwrap()).unwrap();
+            MemoryStyle::Static { byte_reservation } => {
+                assert!(byte_reservation >= plan.memory.minimum_byte_size().unwrap());
+                let bound_bytes = usize::try_from(byte_reservation).unwrap();
                 maximum = Some(bound_bytes.min(maximum.unwrap_or(usize::MAX)));
                 (bound_bytes, 0)
             }
@@ -349,7 +348,7 @@ impl RuntimeLinearMemory for MmapMemory {
         self.memory_image.is_none()
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
         self
     }
 
@@ -448,7 +447,7 @@ impl RuntimeLinearMemory for StaticMemory {
         !self.memory_image.has_image()
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
         self
     }
 
@@ -521,12 +520,16 @@ impl Memory {
     ) -> Result<(usize, Option<usize>)> {
         // Sanity-check what should already be true from wasm module validation.
         let absolute_max = if plan.memory.memory64 {
-            WASM64_MAX_PAGES
+            WASM64_MAX_SIZE
         } else {
-            WASM32_MAX_PAGES
+            WASM32_MAX_SIZE
         };
-        assert!(plan.memory.minimum <= absolute_max);
-        assert!(plan.memory.maximum.is_none() || plan.memory.maximum.unwrap() <= absolute_max);
+        if let Ok(size) = plan.memory.minimum_byte_size() {
+            assert!(size <= absolute_max);
+        }
+        if let Ok(max) = plan.memory.maximum_byte_size() {
+            assert!(max <= absolute_max);
+        }
 
         // This is the absolute possible maximum that the module can try to
         // allocate, which is our entire address space minus a wasm page. That
@@ -547,31 +550,21 @@ impl Memory {
         // happening.
         let minimum = plan
             .memory
-            .minimum
-            .checked_mul(WASM_PAGE_SIZE_U64)
+            .minimum_byte_size()
+            .ok()
             .and_then(|m| usize::try_from(m).ok());
 
         // The plan stores the maximum size in units of wasm pages, but we
         // use units of bytes. Unlike for the `minimum` size we silently clamp
-        // the effective maximum size to `absolute_max` above if the maximum is
-        // too large. This should be ok since as a wasm runtime we get to
-        // arbitrarily decide the actual maximum size of memory, regardless of
-        // what's actually listed on the memory itself.
-        let mut maximum = plan.memory.maximum.map(|max| {
-            usize::try_from(max)
-                .ok()
-                .and_then(|m| m.checked_mul(WASM_PAGE_SIZE))
-                .unwrap_or(absolute_max)
-        });
-
-        // If this is a 32-bit memory and no maximum is otherwise listed then we
-        // need to still specify a maximum size of 4GB. If the host platform is
-        // 32-bit then there's no need to limit the maximum this way since no
-        // allocation of 4GB can succeed, but for 64-bit platforms this is
-        // required to limit memories to 4GB.
-        if !plan.memory.memory64 && maximum.is_none() {
-            maximum = usize::try_from(1u64 << 32).ok();
-        }
+        // the effective maximum size to the limits of what we can track. If the
+        // maximum size exceeds `usize` or `u64` then there's no need to further
+        // keep track of it as some sort of runtime limit will kick in long
+        // before we reach the statically declared maximum size.
+        let maximum = plan
+            .memory
+            .maximum_byte_size()
+            .ok()
+            .and_then(|m| usize::try_from(m).ok());
 
         // Inform the store's limiter what's about to happen. This will let the
         // limiter reject anything if necessary, and this also guarantees that
@@ -654,7 +647,7 @@ impl Memory {
     #[cfg(feature = "pooling-allocator")]
     pub fn unwrap_static_image(mut self) -> MemoryImageSlot {
         let mem = self.0.as_any_mut().downcast_mut::<StaticMemory>().unwrap();
-        std::mem::replace(&mut mem.memory_image, MemoryImageSlot::dummy())
+        core::mem::replace(&mut mem.memory_image, MemoryImageSlot::dummy())
     }
 
     /// If the [Memory] is a [SharedMemory], unwrap it and return a clone to
@@ -684,10 +677,10 @@ impl Memory {
         &mut self,
         addr: u64,
         expected: u32,
-        deadline: Option<Instant>,
+        timeout: Option<Duration>,
     ) -> Result<WaitResult, Trap> {
         match self.0.as_any_mut().downcast_mut::<SharedMemory>() {
-            Some(m) => m.atomic_wait32(addr, expected, deadline),
+            Some(m) => m.atomic_wait32(addr, expected, timeout),
             None => {
                 validate_atomic_addr(&self.vmmemory(), addr, 4, 4)?;
                 Err(Trap::AtomicWaitNonSharedMemory)
@@ -700,10 +693,10 @@ impl Memory {
         &mut self,
         addr: u64,
         expected: u64,
-        deadline: Option<Instant>,
+        timeout: Option<Duration>,
     ) -> Result<WaitResult, Trap> {
         match self.0.as_any_mut().downcast_mut::<SharedMemory>() {
-            Some(m) => m.atomic_wait64(addr, expected, deadline),
+            Some(m) => m.atomic_wait64(addr, expected, timeout),
             None => {
                 validate_atomic_addr(&self.vmmemory(), addr, 8, 8)?;
                 Err(Trap::AtomicWaitNonSharedMemory)

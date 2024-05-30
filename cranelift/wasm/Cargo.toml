@@ -1,6 +1,6 @@
 [package]
 name = "cranelift-wasm"
-version = "0.108.0"
+version = "0.109.0"
 authors = ["The Cranelift Project Developers"]
 description = "Translator from WebAssembly to Cranelift IR"
 documentation = "https://docs.rs/cranelift-wasm"
@@ -15,7 +15,7 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-wasmparser = { workspace = true }
+wasmparser = { workspace = true, features = ['validate'] }
 cranelift-codegen = { workspace = true }
 cranelift-entity = { workspace = true }
 cranelift-frontend = { workspace = true }

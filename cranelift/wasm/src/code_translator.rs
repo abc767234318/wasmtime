@@ -2544,7 +2544,15 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             unimplemented!("GC operators not yet implemented")
         }
 
-        Operator::GlobalAtomicGet { .. } | Operator::GlobalAtomicSet { .. } => {
+        Operator::GlobalAtomicGet { .. }
+        | Operator::GlobalAtomicSet { .. }
+        | Operator::GlobalAtomicRmwAdd { .. }
+        | Operator::GlobalAtomicRmwSub { .. }
+        | Operator::GlobalAtomicRmwOr { .. }
+        | Operator::GlobalAtomicRmwXor { .. }
+        | Operator::GlobalAtomicRmwAnd { .. }
+        | Operator::GlobalAtomicRmwXchg { .. }
+        | Operator::GlobalAtomicRmwCmpxchg { .. } => {
             unimplemented!("shared-everything-threads not yet implemented")
         }
     };
@@ -2777,7 +2785,7 @@ where
     //   legalization of `heap_addr`, eliding the bounds check entirely.
     //
     // * For wasm64 offsets <=2gb will generate a single `heap_addr`
-    //   instruction, but at this time all heaps are "dyanmic" which means that
+    //   instruction, but at this time all heaps are "dynamic" which means that
     //   a single bounds check is forced. Ideally we'd do better here, but
     //   that's the current state of affairs.
     //

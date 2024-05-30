@@ -20,11 +20,12 @@
 //!
 //! Individual operations are exposed through methods on `ResourceTables` for
 //! lifting/lowering/etc. This does mean though that some other fiddly bits
-//! about ABI details can be found in lifting/lowering thoughout Wasmtime,
+//! about ABI details can be found in lifting/lowering throughout Wasmtime,
 //! namely in the `Resource<T>` and `ResourceAny` types.
 
+use crate::prelude::*;
 use anyhow::{bail, Result};
-use std::mem;
+use core::mem;
 use wasmtime_environ::component::TypeResourceTableIndex;
 use wasmtime_environ::PrimaryMap;
 
@@ -61,7 +62,7 @@ pub struct ResourceTables<'a> {
     /// This is the single table used by the host stored within `Store<T>`. Host
     /// resources will point into this and effectively have the same semantics
     /// as-if they're in-component resources. The major distinction though is
-    /// that this is a heterogenous table instead of only containing a single
+    /// that this is a heterogeneous table instead of only containing a single
     /// type.
     pub host_table: Option<&'a mut ResourceTable>,
 

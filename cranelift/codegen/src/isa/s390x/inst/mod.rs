@@ -246,7 +246,6 @@ impl Inst {
             | Inst::LoadAddr { .. }
             | Inst::Loop { .. }
             | Inst::CondBreak { .. }
-            | Inst::VirtualSPOffsetAdj { .. }
             | Inst::Unwind { .. } => InstructionSet::Base,
 
             // These depend on the opcode
@@ -399,7 +398,7 @@ fn memarg_operands(memarg: &mut MemArg, collector: &mut impl OperandVisitor) {
         MemArg::RegOffset { reg, .. } => {
             collector.reg_use(reg);
         }
-        MemArg::InitialSPOffset { .. } | MemArg::NominalSPOffset { .. } => {}
+        MemArg::InitialSPOffset { .. } | MemArg::SlotOffset { .. } => {}
     }
     // mem_finalize might require %r1 to hold (part of) the address.
     // Conservatively assume this will always be necessary here.
@@ -959,7 +958,6 @@ fn s390x_get_operands(inst: &mut Inst, collector: &mut DenyReuseVisitor<impl Ope
             }
         }
         Inst::CondBreak { .. } => {}
-        Inst::VirtualSPOffsetAdj { .. } => {}
         Inst::Unwind { .. } => {}
         Inst::DummyUse { reg } => {
             collector.reg_use(reg);
@@ -1172,9 +1170,7 @@ fn mem_finalize_for_show(mem: &MemArg, state: &EmitState, mi: MemInstType) -> (S
     let (mem_insts, mem) = mem_finalize(mem, state, mi);
     let mut mem_str = mem_insts
         .into_iter()
-        .map(|inst| {
-            inst.print_with_state(&mut EmitState::default(), &mut AllocationConsumer::new(&[]))
-        })
+        .map(|inst| inst.print_with_state(&mut EmitState::default()))
         .collect::<Vec<_>>()
         .join(" ; ");
     if !mem_str.is_empty() {
@@ -1185,24 +1181,11 @@ fn mem_finalize_for_show(mem: &MemArg, state: &EmitState, mi: MemInstType) -> (S
 }
 
 impl Inst {
-    fn print_with_state(
-        &self,
-        state: &mut EmitState,
-        allocs: &mut AllocationConsumer<'_>,
-    ) -> String {
-        // N.B.: order of consumption of `allocs` must match the order
-        // in `s390x_get_operands()`.
-
-        let mut empty_allocs = AllocationConsumer::new(&[]);
-
+    fn print_with_state(&self, state: &mut EmitState) -> String {
         match self {
             &Inst::Nop0 => "nop-zero-len".to_string(),
             &Inst::Nop2 => "nop".to_string(),
             &Inst::AluRRR { alu_op, rd, rn, rm } => {
-                let rd = allocs.next_writable(rd);
-                let rn = allocs.next(rn);
-                let rm = allocs.next(rm);
-
                 let (op, have_rr) = match alu_op {
                     ALUOp::Add32 => ("ark", true),
                     ALUOp::Add64 => ("agrk", true),
@@ -1239,11 +1222,11 @@ impl Inst {
                         ri: rd.to_reg(),
                         rm,
                     };
-                    return inst.print_with_state(state, &mut empty_allocs);
+                    return inst.print_with_state(state);
                 }
-                let rd = pretty_print_reg(rd.to_reg(), &mut empty_allocs);
-                let rn = pretty_print_reg(rn, &mut empty_allocs);
-                let rm = pretty_print_reg(rm, &mut empty_allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
                 format!("{} {}, {}, {}", op, rd, rn, rm)
             }
             &Inst::AluRRSImm16 {
@@ -1252,9 +1235,6 @@ impl Inst {
                 rn,
                 imm,
             } => {
-                let rd = allocs.next_writable(rd);
-                let rn = allocs.next(rn);
-
                 if rd.to_reg() == rn {
                     let inst = Inst::AluRSImm16 {
                         alu_op,
@@ -1262,15 +1242,15 @@ impl Inst {
                         ri: rd.to_reg(),
                         imm,
                     };
-                    return inst.print_with_state(state, &mut empty_allocs);
+                    return inst.print_with_state(state);
                 }
                 let op = match alu_op {
                     ALUOp::Add32 => "ahik",
                     ALUOp::Add64 => "aghik",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg(rd.to_reg(), &mut empty_allocs);
-                let rn = pretty_print_reg(rn, &mut empty_allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
                 format!("{} {}, {}, {}", op, rd, rn, imm)
             }
             &Inst::AluRR { alu_op, rd, ri, rm } => {
@@ -1298,8 +1278,8 @@ impl Inst {
                     ALUOp::Xor64 => "xgr",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
+                let rm = pretty_print_reg(rm);
                 format!("{} {}, {}", op, rd, rm)
             }
             &Inst::AluRX {
@@ -1339,8 +1319,8 @@ impl Inst {
                     _ => unreachable!(),
                 };
 
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
-                let mem = mem.with_allocs(allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -1374,7 +1354,7 @@ impl Inst {
                     ALUOp::Mul64 => "mghi",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
                 format!("{} {}, {}", op, rd, imm)
             }
             &Inst::AluRSImm32 {
@@ -1390,7 +1370,7 @@ impl Inst {
                     ALUOp::Mul64 => "msgfi",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
                 format!("{} {}, {}", op, rd, imm)
             }
             &Inst::AluRUImm32 {
@@ -1406,7 +1386,7 @@ impl Inst {
                     ALUOp::SubLogical64 => "slgfi",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
                 format!("{} {}, {}", op, rd, imm)
             }
             &Inst::AluRUImm16Shifted {
@@ -1430,7 +1410,7 @@ impl Inst {
                     (ALUOp::Orr64, 3) => "oihh",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
                 format!("{} {}, {}", op, rd, imm.bits)
             }
             &Inst::AluRUImm32Shifted {
@@ -1451,50 +1431,50 @@ impl Inst {
                     (ALUOp::Xor64, 1) => "xihf",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
                 format!("{} {}, {}", op, rd, imm.bits)
             }
             &Inst::SMulWide { rd, rn, rm } => {
                 let op = "mgrk";
-                let rn = pretty_print_reg(rn, allocs);
-                let rm = pretty_print_reg(rm, allocs);
-                let rd = pretty_print_regpair(rd.to_regpair(), allocs);
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
+                let rd = pretty_print_regpair(rd.to_regpair());
                 format!("{} {}, {}, {}", op, rd, rn, rm)
             }
             &Inst::UMulWide { rd, ri, rn } => {
                 let op = "mlgr";
-                let rn = pretty_print_reg(rn, allocs);
-                let rd = pretty_print_regpair_mod_lo(rd, ri, allocs);
+                let rn = pretty_print_reg(rn);
+                let rd = pretty_print_regpair_mod_lo(rd, ri);
                 format!("{} {}, {}", op, rd, rn)
             }
             &Inst::SDivMod32 { rd, ri, rn } => {
                 let op = "dsgfr";
-                let rn = pretty_print_reg(rn, allocs);
-                let rd = pretty_print_regpair_mod_lo(rd, ri, allocs);
+                let rn = pretty_print_reg(rn);
+                let rd = pretty_print_regpair_mod_lo(rd, ri);
                 format!("{} {}, {}", op, rd, rn)
             }
             &Inst::SDivMod64 { rd, ri, rn } => {
                 let op = "dsgr";
-                let rn = pretty_print_reg(rn, allocs);
-                let rd = pretty_print_regpair_mod_lo(rd, ri, allocs);
+                let rn = pretty_print_reg(rn);
+                let rd = pretty_print_regpair_mod_lo(rd, ri);
                 format!("{} {}, {}", op, rd, rn)
             }
             &Inst::UDivMod32 { rd, ri, rn } => {
                 let op = "dlr";
-                let rn = pretty_print_reg(rn, allocs);
-                let rd = pretty_print_regpair_mod(rd, ri, allocs);
+                let rn = pretty_print_reg(rn);
+                let rd = pretty_print_regpair_mod(rd, ri);
                 format!("{} {}, {}", op, rd, rn)
             }
             &Inst::UDivMod64 { rd, ri, rn } => {
                 let op = "dlgr";
-                let rn = pretty_print_reg(rn, allocs);
-                let rd = pretty_print_regpair_mod(rd, ri, allocs);
+                let rn = pretty_print_reg(rn);
+                let rd = pretty_print_regpair_mod(rd, ri);
                 format!("{} {}, {}", op, rd, rn)
             }
             &Inst::Flogr { rd, rn } => {
                 let op = "flogr";
-                let rn = pretty_print_reg(rn, allocs);
-                let rd = pretty_print_regpair(rd.to_regpair(), allocs);
+                let rn = pretty_print_reg(rn);
+                let rd = pretty_print_regpair(rd.to_regpair());
                 format!("{} {}, {}", op, rd, rn)
             }
             &Inst::ShiftRR {
@@ -1514,10 +1494,10 @@ impl Inst {
                     ShiftOp::AShR32 => "srak",
                     ShiftOp::AShR64 => "srag",
                 };
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
                 let shift_reg = if shift_reg != zero_reg() {
-                    format!("({})", pretty_print_reg(shift_reg, allocs))
+                    format!("({})", pretty_print_reg(shift_reg))
                 } else {
                     "".to_string()
                 };
@@ -1538,8 +1518,8 @@ impl Inst {
                     RxSBGOp::Or => "rosbg",
                     RxSBGOp::Xor => "rxsbg",
                 };
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
-                let rn = pretty_print_reg(rn, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
+                let rn = pretty_print_reg(rn);
                 format!(
                     "{} {}, {}, {}, {}, {}",
                     op,
@@ -1564,8 +1544,8 @@ impl Inst {
                     RxSBGOp::Xor => "rxsbg",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg(rd, allocs);
-                let rn = pretty_print_reg(rn, allocs);
+                let rd = pretty_print_reg(rd);
+                let rn = pretty_print_reg(rn);
                 format!(
                     "{} {}, {}, {}, {}, {}",
                     op,
@@ -1589,8 +1569,8 @@ impl Inst {
                     UnaryOp::BSwap32 => ("lrvr", ""),
                     UnaryOp::BSwap64 => ("lrvgr", ""),
                 };
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
                 format!("{} {}, {}{}", op, rd, rn, extra)
             }
             &Inst::CmpRR { op, rn, rm } => {
@@ -1603,8 +1583,8 @@ impl Inst {
                     CmpOp::CmpL64Ext32 => "clgfr",
                     _ => unreachable!(),
                 };
-                let rn = pretty_print_reg(rn, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
                 format!("{} {}, {}", op, rn, rm)
             }
             &Inst::CmpRX { op, rn, ref mem } => {
@@ -1621,8 +1601,8 @@ impl Inst {
                     CmpOp::CmpL64Ext32 => (None, Some("clgf"), Some("clgfrl")),
                 };
 
-                let rn = pretty_print_reg(rn, allocs);
-                let mem = mem.with_allocs(allocs);
+                let rn = pretty_print_reg(rn);
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -1650,7 +1630,7 @@ impl Inst {
                     CmpOp::CmpS64 => "cghi",
                     _ => unreachable!(),
                 };
-                let rn = pretty_print_reg(rn, allocs);
+                let rn = pretty_print_reg(rn);
                 format!("{} {}, {}", op, rn, imm)
             }
             &Inst::CmpRSImm32 { op, rn, imm } => {
@@ -1659,7 +1639,7 @@ impl Inst {
                     CmpOp::CmpS64 => "cgfi",
                     _ => unreachable!(),
                 };
-                let rn = pretty_print_reg(rn, allocs);
+                let rn = pretty_print_reg(rn);
                 format!("{} {}, {}", op, rn, imm)
             }
             &Inst::CmpRUImm32 { op, rn, imm } => {
@@ -1668,7 +1648,7 @@ impl Inst {
                     CmpOp::CmpL64 => "clgfi",
                     _ => unreachable!(),
                 };
-                let rn = pretty_print_reg(rn, allocs);
+                let rn = pretty_print_reg(rn);
                 format!("{} {}, {}", op, rn, imm)
             }
             &Inst::CmpTrapRR {
@@ -1681,8 +1661,8 @@ impl Inst {
                     CmpOp::CmpL64 => "clgrt",
                     _ => unreachable!(),
                 };
-                let rn = pretty_print_reg(rn, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
                 let cond = cond.pretty_print_default();
                 format!("{}{} {}, {}", op, cond, rn, rm)
             }
@@ -1694,7 +1674,7 @@ impl Inst {
                     CmpOp::CmpS64 => "cgit",
                     _ => unreachable!(),
                 };
-                let rn = pretty_print_reg(rn, allocs);
+                let rn = pretty_print_reg(rn);
                 let cond = cond.pretty_print_default();
                 format!("{}{} {}, {}", op, cond, rn, imm)
             }
@@ -1706,7 +1686,7 @@ impl Inst {
                     CmpOp::CmpL64 => "clgit",
                     _ => unreachable!(),
                 };
-                let rn = pretty_print_reg(rn, allocs);
+                let rn = pretty_print_reg(rn);
                 let cond = cond.pretty_print_default();
                 format!("{}{} {}, {}", op, cond, rn, imm)
             }
@@ -1730,9 +1710,9 @@ impl Inst {
                     _ => unreachable!(),
                 };
 
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
-                let mem = mem.with_allocs(allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -1765,9 +1745,9 @@ impl Inst {
                     _ => unreachable!(),
                 };
 
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
-                let rn = pretty_print_reg(rn, allocs);
-                let mem = mem.with_allocs(allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
+                let rn = pretty_print_reg(rn);
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -1823,8 +1803,8 @@ impl Inst {
                     _ => unreachable!(),
                 };
 
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let mem = mem.with_allocs(allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -1863,8 +1843,8 @@ impl Inst {
                     _ => unreachable!(),
                 };
 
-                let rd = pretty_print_reg(rd, allocs);
-                let mem = mem.with_allocs(allocs);
+                let rd = pretty_print_reg(rd);
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -1887,7 +1867,7 @@ impl Inst {
                 format!("{}{} {}, {}", mem_str, op.unwrap(), rd, mem)
             }
             &Inst::StoreImm8 { imm, ref mem } => {
-                let mem = mem.with_allocs(allocs);
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -1911,7 +1891,7 @@ impl Inst {
             &Inst::StoreImm16 { imm, ref mem }
             | &Inst::StoreImm32SExt16 { imm, ref mem }
             | &Inst::StoreImm64SExt16 { imm, ref mem } => {
-                let mem = mem.with_allocs(allocs);
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -1938,8 +1918,8 @@ impl Inst {
                 ref src,
                 len_minus_one,
             } => {
-                let dst = dst.with_allocs(allocs);
-                let src = src.with_allocs(allocs);
+                let dst = dst.clone();
+                let src = src.clone();
                 format!(
                     "mvc {}({},{}), {}({})",
                     dst.disp.pretty_print_default(),
@@ -1950,7 +1930,7 @@ impl Inst {
                 )
             }
             &Inst::LoadMultiple64 { rt, rt2, ref mem } => {
-                let mem = mem.with_allocs(allocs);
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -1962,13 +1942,13 @@ impl Inst {
                         have_index: false,
                     },
                 );
-                let rt = pretty_print_reg(rt.to_reg(), &mut empty_allocs);
-                let rt2 = pretty_print_reg(rt2.to_reg(), &mut empty_allocs);
+                let rt = pretty_print_reg(rt.to_reg());
+                let rt2 = pretty_print_reg(rt2.to_reg());
                 let mem = mem.pretty_print_default();
                 format!("{}lmg {}, {}, {}", mem_str, rt, rt2, mem)
             }
             &Inst::StoreMultiple64 { rt, rt2, ref mem } => {
-                let mem = mem.with_allocs(allocs);
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -1980,44 +1960,44 @@ impl Inst {
                         have_index: false,
                     },
                 );
-                let rt = pretty_print_reg(rt, &mut empty_allocs);
-                let rt2 = pretty_print_reg(rt2, &mut empty_allocs);
+                let rt = pretty_print_reg(rt);
+                let rt2 = pretty_print_reg(rt2);
                 let mem = mem.pretty_print_default();
                 format!("{}stmg {}, {}, {}", mem_str, rt, rt2, mem)
             }
             &Inst::Mov64 { rd, rm } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rm = pretty_print_reg(rm);
                 format!("lgr {}, {}", rd, rm)
             }
             &Inst::MovPReg { rd, rm } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = pretty_print_reg(rd.to_reg());
                 let rm = show_reg(rm.into());
                 format!("lgr {}, {}", rd, rm)
             }
             &Inst::Mov32 { rd, rm } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rm = pretty_print_reg(rm);
                 format!("lr {}, {}", rd, rm)
             }
             &Inst::Mov32Imm { rd, ref imm } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = pretty_print_reg(rd.to_reg());
                 format!("iilf {}, {}", rd, imm)
             }
             &Inst::Mov32SImm16 { rd, ref imm } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = pretty_print_reg(rd.to_reg());
                 format!("lhi {}, {}", rd, imm)
             }
             &Inst::Mov64SImm16 { rd, ref imm } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = pretty_print_reg(rd.to_reg());
                 format!("lghi {}, {}", rd, imm)
             }
             &Inst::Mov64SImm32 { rd, ref imm } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = pretty_print_reg(rd.to_reg());
                 format!("lgfi {}, {}", rd, imm)
             }
             &Inst::Mov64UImm16Shifted { rd, ref imm } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = pretty_print_reg(rd.to_reg());
                 let op = match imm.shift {
                     0 => "llill",
                     1 => "llilh",
@@ -2028,7 +2008,7 @@ impl Inst {
                 format!("{} {}, {}", op, rd, imm.bits)
             }
             &Inst::Mov64UImm32Shifted { rd, ref imm } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = pretty_print_reg(rd.to_reg());
                 let op = match imm.shift {
                     0 => "llilf",
                     1 => "llihf",
@@ -2037,7 +2017,7 @@ impl Inst {
                 format!("{} {}, {}", op, rd, imm.bits)
             }
             &Inst::Insert64UImm16Shifted { rd, ri, ref imm } => {
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
                 let op = match imm.shift {
                     0 => "iill",
                     1 => "iilh",
@@ -2048,7 +2028,7 @@ impl Inst {
                 format!("{} {}, {}", op, rd, imm.bits)
             }
             &Inst::Insert64UImm32Shifted { rd, ri, ref imm } => {
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
                 let op = match imm.shift {
                     0 => "iilf",
                     1 => "iihf",
@@ -2057,22 +2037,22 @@ impl Inst {
                 format!("{} {}, {}", op, rd, imm.bits)
             }
             &Inst::LoadAR { rd, ar } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = pretty_print_reg(rd.to_reg());
                 format!("ear {}, %a{}", rd, ar)
             }
             &Inst::InsertAR { rd, ri, ar } => {
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
                 format!("ear {}, %a{}", rd, ar)
             }
             &Inst::CMov32 { rd, cond, ri, rm } => {
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
+                let rm = pretty_print_reg(rm);
                 let cond = cond.pretty_print_default();
                 format!("locr{} {}, {}", cond, rd, rm)
             }
             &Inst::CMov64 { rd, cond, ri, rm } => {
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
+                let rm = pretty_print_reg(rm);
                 let cond = cond.pretty_print_default();
                 format!("locgr{} {}, {}", cond, rd, rm)
             }
@@ -2082,7 +2062,7 @@ impl Inst {
                 ri,
                 ref imm,
             } => {
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
                 let cond = cond.pretty_print_default();
                 format!("lochi{} {}, {}", cond, rd, imm)
             }
@@ -2092,13 +2072,13 @@ impl Inst {
                 ri,
                 ref imm,
             } => {
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
                 let cond = cond.pretty_print_default();
                 format!("locghi{} {}, {}", cond, rd, imm)
             }
             &Inst::FpuMove32 { rd, rn } => {
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let (rn, rn_fpr) = pretty_print_fpr(rn, allocs);
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let (rn, rn_fpr) = pretty_print_fpr(rn);
                 if rd_fpr.is_some() && rn_fpr.is_some() {
                     format!("ler {}, {}", rd_fpr.unwrap(), rn_fpr.unwrap())
                 } else {
@@ -2106,18 +2086,17 @@ impl Inst {
                 }
             }
             &Inst::FpuMove64 { rd, rn } => {
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let (rn, rn_fpr) = pretty_print_fpr(rn, allocs);
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let (rn, rn_fpr) = pretty_print_fpr(rn);
                 if rd_fpr.is_some() && rn_fpr.is_some() {
                     format!("ldr {}, {}", rd_fpr.unwrap(), rn_fpr.unwrap())
                 } else {
                     format!("vlr {}, {}", rd, rn)
                 }
             }
-            &Inst::FpuCMov32 { rd, cond, ri, rm } => {
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let _ri = allocs.next(ri);
-                let (rm, rm_fpr) = pretty_print_fpr(rm, allocs);
+            &Inst::FpuCMov32 { rd, cond, rm, .. } => {
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let (rm, rm_fpr) = pretty_print_fpr(rm);
                 if rd_fpr.is_some() && rm_fpr.is_some() {
                     let cond = cond.invert().pretty_print_default();
                     format!("j{} 6 ; ler {}, {}", cond, rd_fpr.unwrap(), rm_fpr.unwrap())
@@ -2126,10 +2105,9 @@ impl Inst {
                     format!("j{} 10 ; vlr {}, {}", cond, rd, rm)
                 }
             }
-            &Inst::FpuCMov64 { rd, cond, ri, rm } => {
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let _ri = allocs.next(ri);
-                let (rm, rm_fpr) = pretty_print_fpr(rm, allocs);
+            &Inst::FpuCMov64 { rd, cond, rm, .. } => {
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let (rm, rm_fpr) = pretty_print_fpr(rm);
                 if rd_fpr.is_some() && rm_fpr.is_some() {
                     let cond = cond.invert().pretty_print_default();
                     format!("j{} 6 ; ldr {}, {}", cond, rd_fpr.unwrap(), rm_fpr.unwrap())
@@ -2160,8 +2138,8 @@ impl Inst {
                     FPUOp1::Cvt32x4To64x2 => ("vldeb", None),
                 };
 
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let (rn, rn_fpr) = pretty_print_fpr(rn, allocs);
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let (rn, rn_fpr) = pretty_print_fpr(rn);
                 if op_fpr.is_some() && rd_fpr.is_some() && rn_fpr.is_some() {
                     format!(
                         "{} {}, {}",
@@ -2211,9 +2189,9 @@ impl Inst {
                     FPUOp2::MinPseudo64x2 => ("vfmindb", ", 3", None),
                 };
 
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let (rn, rn_fpr) = pretty_print_fpr(rn, allocs);
-                let (rm, rm_fpr) = pretty_print_fpr(rm, allocs);
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let (rn, rn_fpr) = pretty_print_fpr(rn);
+                let (rm, rm_fpr) = pretty_print_fpr(rm);
                 if op_fpr.is_some() && rd == rn && rd_fpr.is_some() && rm_fpr.is_some() {
                     format!(
                         "{} {}, {}",
@@ -2252,10 +2230,10 @@ impl Inst {
                     FPUOp3::MSub64x2 => ("vfmsdb", None),
                 };
 
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let (rn, rn_fpr) = pretty_print_fpr(rn, allocs);
-                let (rm, rm_fpr) = pretty_print_fpr(rm, allocs);
-                let (ra, ra_fpr) = pretty_print_fpr(ra, allocs);
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let (rn, rn_fpr) = pretty_print_fpr(rn);
+                let (rm, rm_fpr) = pretty_print_fpr(rm);
+                let (ra, ra_fpr) = pretty_print_fpr(ra);
                 if op_fpr.is_some()
                     && rd == ra
                     && rd_fpr.is_some()
@@ -2283,8 +2261,8 @@ impl Inst {
                 }
             }
             &Inst::FpuCmp32 { rn, rm } => {
-                let (rn, rn_fpr) = pretty_print_fpr(rn, allocs);
-                let (rm, rm_fpr) = pretty_print_fpr(rm, allocs);
+                let (rn, rn_fpr) = pretty_print_fpr(rn);
+                let (rm, rm_fpr) = pretty_print_fpr(rm);
                 if rn_fpr.is_some() && rm_fpr.is_some() {
                     format!("cebr {}, {}", rn_fpr.unwrap(), rm_fpr.unwrap())
                 } else {
@@ -2292,8 +2270,8 @@ impl Inst {
                 }
             }
             &Inst::FpuCmp64 { rn, rm } => {
-                let (rn, rn_fpr) = pretty_print_fpr(rn, allocs);
-                let (rm, rm_fpr) = pretty_print_fpr(rm, allocs);
+                let (rn, rn_fpr) = pretty_print_fpr(rn);
+                let (rm, rm_fpr) = pretty_print_fpr(rm);
                 if rn_fpr.is_some() && rm_fpr.is_some() {
                     format!("cdbr {}, {}", rn_fpr.unwrap(), rm_fpr.unwrap())
                 } else {
@@ -2301,8 +2279,8 @@ impl Inst {
                 }
             }
             &Inst::LoadFpuConst32 { rd, const_data } => {
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let tmp = pretty_print_reg(writable_spilltmp_reg().to_reg(), &mut empty_allocs);
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let tmp = pretty_print_reg(writable_spilltmp_reg().to_reg());
                 if rd_fpr.is_some() {
                     format!(
                         "bras {}, 8 ; data.f32 {} ; le {}, 0({})",
@@ -2322,8 +2300,8 @@ impl Inst {
                 }
             }
             &Inst::LoadFpuConst64 { rd, const_data } => {
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let tmp = pretty_print_reg(writable_spilltmp_reg().to_reg(), &mut empty_allocs);
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let tmp = pretty_print_reg(writable_spilltmp_reg().to_reg());
                 if rd_fpr.is_some() {
                     format!(
                         "bras {}, 12 ; data.f64 {} ; ld {}, 0({})",
@@ -2377,8 +2355,8 @@ impl Inst {
                     FpuRoundOp::FromUInt64x2 => ("vcdlgb", None),
                 };
 
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let (rn, rn_fpr) = pretty_print_fpr(rn, allocs);
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let (rn, rn_fpr) = pretty_print_fpr(rn);
                 if opcode_fpr.is_some() && rd_fpr.is_some() && rn_fpr.is_some() {
                     format!(
                         "{} {}, {}, {}{}",
@@ -2494,9 +2472,9 @@ impl Inst {
                     VecBinaryOp::MergeHigh32x4 => "vmrhf",
                     VecBinaryOp::MergeHigh64x2 => "vmrhg",
                 };
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
                 format!("{} {}, {}, {}", op, rd, rn, rm)
             }
             &Inst::VecRR { op, rd, rn } => {
@@ -2534,8 +2512,8 @@ impl Inst {
                     VecUnaryOp::UnpackSHigh16x8 => "vuphh",
                     VecUnaryOp::UnpackSHigh32x4 => "vuphf",
                 };
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
                 format!("{} {}, {}", op, rd, rn)
             }
             &Inst::VecShiftRR {
@@ -2563,27 +2541,27 @@ impl Inst {
                     VecShiftOp::AShR32x4 => "vesraf",
                     VecShiftOp::AShR64x2 => "vesrag",
                 };
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
                 let shift_reg = if shift_reg != zero_reg() {
-                    format!("({})", pretty_print_reg(shift_reg, allocs))
+                    format!("({})", pretty_print_reg(shift_reg))
                 } else {
                     "".to_string()
                 };
                 format!("{} {}, {}, {}{}", op, rd, rn, shift_imm, shift_reg)
             }
             &Inst::VecSelect { rd, rn, rm, ra } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
-                let rm = pretty_print_reg(rm, allocs);
-                let ra = pretty_print_reg(ra, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
+                let ra = pretty_print_reg(ra);
                 format!("vsel {}, {}, {}, {}", rd, rn, rm, ra)
             }
             &Inst::VecPermute { rd, rn, rm, ra } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
-                let rm = pretty_print_reg(rm, allocs);
-                let ra = pretty_print_reg(ra, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
+                let ra = pretty_print_reg(ra);
                 format!("vperm {}, {}, {}, {}", rd, rn, rm, ra)
             }
             &Inst::VecPermuteDWImm {
@@ -2593,9 +2571,9 @@ impl Inst {
                 idx1,
                 idx2,
             } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
                 let m4 = (idx1 & 1) * 4 + (idx2 & 1);
                 format!("vpdi {}, {}, {}, {}", rd, rn, rm, m4)
             }
@@ -2619,9 +2597,9 @@ impl Inst {
                     &Inst::VecIntCmpS { .. } => "s",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
                 format!("{}{} {}, {}, {}", op, s, rd, rn, rm)
             }
             &Inst::VecFloatCmp { op, rd, rn, rm } | &Inst::VecFloatCmpS { op, rd, rn, rm } => {
@@ -2638,9 +2616,9 @@ impl Inst {
                     &Inst::VecFloatCmpS { .. } => "s",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
                 format!("{}{} {}, {}, {}", op, s, rd, rn, rm)
             }
             &Inst::VecInt128SCmpHi { tmp, rn, rm } | &Inst::VecInt128UCmpHi { tmp, rn, rm } => {
@@ -2649,9 +2627,9 @@ impl Inst {
                     &Inst::VecInt128UCmpHi { .. } => "veclg",
                     _ => unreachable!(),
                 };
-                let tmp = pretty_print_reg(tmp.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let tmp = pretty_print_reg(tmp.to_reg());
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
                 format!(
                     "{} {}, {} ; jne 10 ; vchlgs {}, {}, {}",
                     op, rm, rn, tmp, rn, rm
@@ -2677,8 +2655,8 @@ impl Inst {
                     _ => unreachable!(),
                 };
 
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let mem = mem.with_allocs(allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -2713,8 +2691,8 @@ impl Inst {
                     _ => unreachable!(),
                 };
 
-                let rd = pretty_print_reg(rd, allocs);
-                let mem = mem.with_allocs(allocs);
+                let rd = pretty_print_reg(rd);
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -2742,8 +2720,8 @@ impl Inst {
                     _ => unreachable!(),
                 };
 
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let mem = mem.with_allocs(allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -2759,25 +2737,25 @@ impl Inst {
                 format!("{}{} {}, {}", mem_str, opcode, rd, mem)
             }
             &Inst::VecMov { rd, rn } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
                 format!("vlr {}, {}", rd, rn)
             }
             &Inst::VecCMov { rd, cond, ri, rm } => {
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
+                let rm = pretty_print_reg(rm);
                 let cond = cond.invert().pretty_print_default();
                 format!("j{} 10 ; vlr {}, {}", cond, rd, rm)
             }
             &Inst::MovToVec128 { rd, rn, rm } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
-                let rm = pretty_print_reg(rm, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
+                let rm = pretty_print_reg(rm);
                 format!("vlvgp {}, {}, {}", rd, rn, rm)
             }
             &Inst::VecLoadConst { rd, const_data } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let tmp = pretty_print_reg(writable_spilltmp_reg().to_reg(), &mut empty_allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let tmp = pretty_print_reg(writable_spilltmp_reg().to_reg());
                 format!(
                     "bras {}, 20 ; data.u128 0x{:032x} ; vl {}, 0({})",
                     tmp, const_data, rd, tmp
@@ -2788,8 +2766,8 @@ impl Inst {
                 rd,
                 const_data,
             } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let tmp = pretty_print_reg(writable_spilltmp_reg().to_reg(), &mut empty_allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let tmp = pretty_print_reg(writable_spilltmp_reg().to_reg());
                 let (opcode, data) = match size {
                     32 => ("vlrepf", format!("0x{:08x}", const_data as u32)),
                     64 => ("vlrepg", format!("0x{:016x}", const_data)),
@@ -2807,7 +2785,7 @@ impl Inst {
                 )
             }
             &Inst::VecImmByteMask { rd, mask } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = pretty_print_reg(rd.to_reg());
                 format!("vgbm {}, {}", rd, mask)
             }
             &Inst::VecImmBitMask {
@@ -2816,7 +2794,7 @@ impl Inst {
                 start_bit,
                 end_bit,
             } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = pretty_print_reg(rd.to_reg());
                 let op = match size {
                     8 => "vgmb",
                     16 => "vgmh",
@@ -2827,7 +2805,7 @@ impl Inst {
                 format!("{} {}, {}, {}", op, rd, start_bit, end_bit)
             }
             &Inst::VecImmReplicate { size, rd, imm } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = pretty_print_reg(rd.to_reg());
                 let op = match size {
                     8 => "vrepib",
                     16 => "vrepih",
@@ -2840,16 +2818,16 @@ impl Inst {
             &Inst::VecLoadLane {
                 size,
                 rd,
-                ri,
                 ref mem,
                 lane_imm,
+                ..
             }
             | &Inst::VecLoadLaneRev {
                 size,
                 rd,
-                ri,
                 ref mem,
                 lane_imm,
+                ..
             } => {
                 let opcode_vrx = match (self, size) {
                     (&Inst::VecLoadLane { .. }, 8) => "vleb",
@@ -2862,9 +2840,8 @@ impl Inst {
                     _ => unreachable!(),
                 };
 
-                let (rd, _) = pretty_print_fpr(rd.to_reg(), allocs);
-                let _ri = allocs.next(ri);
-                let mem = mem.with_allocs(allocs);
+                let (rd, _) = pretty_print_fpr(rd.to_reg());
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -2902,8 +2879,8 @@ impl Inst {
                     _ => unreachable!(),
                 };
 
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let mem = mem.with_allocs(allocs);
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let mem = mem.clone();
                 if lane_imm == 0 && rd_fpr.is_some() && opcode_rx.is_some() {
                     let (mem_str, mem) = mem_finalize_for_show(
                         &mem,
@@ -2962,8 +2939,8 @@ impl Inst {
                     _ => unreachable!(),
                 };
 
-                let (rd, rd_fpr) = pretty_print_fpr(rd, allocs);
-                let mem = mem.with_allocs(allocs);
+                let (rd, rd_fpr) = pretty_print_fpr(rd);
+                let mem = mem.clone();
                 if lane_imm == 0 && rd_fpr.is_some() && opcode_rx.is_some() {
                     let (mem_str, mem) = mem_finalize_for_show(
                         &mem,
@@ -3014,10 +2991,10 @@ impl Inst {
                     64 => "vlvgg",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
-                let rn = pretty_print_reg(rn, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
+                let rn = pretty_print_reg(rn);
                 let lane_reg = if lane_reg != zero_reg() {
-                    format!("({})", pretty_print_reg(lane_reg, allocs))
+                    format!("({})", pretty_print_reg(lane_reg))
                 } else {
                     "".to_string()
                 };
@@ -3037,10 +3014,10 @@ impl Inst {
                     64 => ("vlvgg", Some("ldgr")),
                     _ => unreachable!(),
                 };
-                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
+                let (rd, rd_fpr) = pretty_print_fpr(rd.to_reg());
+                let rn = pretty_print_reg(rn);
                 let lane_reg = if lane_reg != zero_reg() {
-                    format!("({})", pretty_print_reg(lane_reg, allocs))
+                    format!("({})", pretty_print_reg(lane_reg))
                 } else {
                     "".to_string()
                 };
@@ -3065,10 +3042,10 @@ impl Inst {
                     64 => ("vlgvg", Some("lgdr")),
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let (rn, rn_fpr) = pretty_print_fpr(rn, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let (rn, rn_fpr) = pretty_print_fpr(rn);
                 let lane_reg = if lane_reg != zero_reg() {
-                    format!("({})", pretty_print_reg(lane_reg, allocs))
+                    format!("({})", pretty_print_reg(lane_reg))
                 } else {
                     "".to_string()
                 };
@@ -3093,7 +3070,7 @@ impl Inst {
                     64 => "vleig",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg_mod(rd, ri, allocs);
+                let rd = pretty_print_reg_mod(rd, ri);
                 format!("{} {}, {}, {}", op, rd, imm, lane_imm)
             }
             &Inst::VecReplicateLane {
@@ -3109,8 +3086,8 @@ impl Inst {
                     64 => "vrepg",
                     _ => unreachable!(),
                 };
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
                 format!("{} {}, {}, {}", op, rd, rn, lane_imm)
             }
             &Inst::Extend {
@@ -3120,8 +3097,8 @@ impl Inst {
                 from_bits,
                 to_bits,
             } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let rn = pretty_print_reg(rn, allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let rn = pretty_print_reg(rn);
                 let op = match (signed, from_bits, to_bits) {
                     (_, 1, 32) => "llcr",
                     (_, 1, 64) => "llgcr",
@@ -3158,15 +3135,15 @@ impl Inst {
             }
             &Inst::CallInd { link, ref info, .. } => {
                 let link = link.to_reg();
-                let rn = pretty_print_reg(info.rn, allocs);
+                let rn = pretty_print_reg(info.rn);
                 debug_assert_eq!(link, gpr(14));
                 format!("basr {}, {}", show_reg(link), rn)
             }
             &Inst::Args { ref args } => {
                 let mut s = "args".to_string();
                 for arg in args {
-                    let preg = pretty_print_reg(arg.preg, &mut empty_allocs);
-                    let def = pretty_print_reg(arg.vreg.to_reg(), allocs);
+                    let preg = pretty_print_reg(arg.preg);
+                    let def = pretty_print_reg(arg.vreg.to_reg());
                     write!(&mut s, " {}={}", def, preg).unwrap();
                 }
                 s
@@ -3174,8 +3151,8 @@ impl Inst {
             &Inst::Rets { ref rets } => {
                 let mut s = "rets".to_string();
                 for ret in rets {
-                    let preg = pretty_print_reg(ret.preg, &mut empty_allocs);
-                    let vreg = pretty_print_reg(ret.vreg, allocs);
+                    let preg = pretty_print_reg(ret.preg);
+                    let vreg = pretty_print_reg(ret.vreg);
                     write!(&mut s, " {}={}", vreg, preg).unwrap();
                 }
                 s
@@ -3190,7 +3167,7 @@ impl Inst {
                 format!("jg {}", dest)
             }
             &Inst::IndirectBr { rn, .. } => {
-                let rn = pretty_print_reg(rn, allocs);
+                let rn = pretty_print_reg(rn);
                 format!("br {}", rn)
             }
             &Inst::CondBr {
@@ -3217,8 +3194,8 @@ impl Inst {
                 format!("jg{} .+2 # trap={}", cond, trap_code)
             }
             &Inst::JTSequence { ridx, ref targets } => {
-                let ridx = pretty_print_reg(ridx, allocs);
-                let rtmp = pretty_print_reg(writable_spilltmp_reg().to_reg(), &mut empty_allocs);
+                let ridx = pretty_print_reg(ridx);
+                let rtmp = pretty_print_reg(writable_spilltmp_reg().to_reg());
                 // The first entry is the default target, which is not emitted
                 // into the jump table, so we skip it here.  It is only in the
                 // list so MachTerminator will see the potential target.
@@ -3241,8 +3218,8 @@ impl Inst {
                 rd,
                 ref symbol_reloc,
             } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let tmp = pretty_print_reg(writable_spilltmp_reg().to_reg(), &mut empty_allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let tmp = pretty_print_reg(writable_spilltmp_reg().to_reg());
                 let symbol = match &**symbol_reloc {
                     SymbolReloc::Absolute { name, offset } => {
                         format!("{} + {}", name.display(None), offset)
@@ -3252,8 +3229,8 @@ impl Inst {
                 format!("bras {}, 12 ; data {} ; lg {}, 0({})", tmp, symbol, rd, tmp)
             }
             &Inst::LoadAddr { rd, ref mem } => {
-                let rd = pretty_print_reg(rd.to_reg(), allocs);
-                let mem = mem.with_allocs(allocs);
+                let rd = pretty_print_reg(rd.to_reg());
+                let mem = mem.clone();
                 let (mem_str, mem) = mem_finalize_for_show(
                     &mem,
                     state,
@@ -3278,7 +3255,7 @@ impl Inst {
             &Inst::Loop { ref body, cond } => {
                 let body = body
                     .into_iter()
-                    .map(|inst| inst.print_with_state(state, allocs))
+                    .map(|inst| inst.print_with_state(state))
                     .collect::<Vec<_>>()
                     .join(" ; ");
                 let cond = cond.pretty_print_default();
@@ -3288,15 +3265,11 @@ impl Inst {
                 let cond = cond.pretty_print_default();
                 format!("jg{} 1f", cond)
             }
-            &Inst::VirtualSPOffsetAdj { offset } => {
-                state.virtual_sp_offset += offset;
-                format!("virtual_sp_offset_adjust {}", offset)
-            }
             &Inst::Unwind { ref inst } => {
                 format!("unwind {:?}", inst)
             }
             &Inst::DummyUse { reg } => {
-                let reg = pretty_print_reg(reg, allocs);
+                let reg = pretty_print_reg(reg);
                 format!("dummy_use {}", reg)
             }
         }

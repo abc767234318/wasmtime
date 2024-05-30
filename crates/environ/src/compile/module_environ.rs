@@ -2,6 +2,7 @@ use crate::module::{
     FuncRefIndex, Initializer, MemoryInitialization, MemoryInitializer, MemoryPlan, Module,
     TablePlan, TableSegment, TableSegmentElements,
 };
+use crate::prelude::*;
 use crate::{
     DataIndex, DefinedFuncIndex, ElemIndex, EntityIndex, EntityType, FuncIndex, GlobalIndex,
     InitMemory, MemoryIndex, ModuleTypesBuilder, PrimaryMap, StaticMemoryInitializer, TableIndex,
@@ -10,18 +11,18 @@ use crate::{
 };
 use anyhow::{bail, Result};
 use cranelift_entity::packed_option::ReservedValue;
+use cranelift_entity::EntityRef;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
-use wasmparser::OperatorsReader;
 use wasmparser::{
     types::Types, CustomSectionReader, DataKind, ElementItems, ElementKind, Encoding, ExternalKind,
-    FuncToValidate, FunctionBody, NameSectionReader, Naming, Operator, Parser, Payload, TypeRef,
-    Validator, ValidatorResources, WasmFeatures,
+    FuncToValidate, FunctionBody, KnownCustom, NameSectionReader, Naming, Operator, Parser,
+    Payload, TypeRef, Validator, ValidatorResources,
 };
-use wasmtime_types::{ConstExpr, ConstOp, ModuleInternedTypeIndex};
+use wasmtime_types::{ConstExpr, ConstOp, ModuleInternedTypeIndex, WasmHeapTopType};
 
 /// Object containing the standalone environment information.
 pub struct ModuleEnvironment<'a, 'data> {
@@ -321,7 +322,7 @@ impl<'a, 'data> ModuleEnvironment<'a, 'data> {
                         }
                         TypeRef::Table(ty) => {
                             self.result.module.num_imported_tables += 1;
-                            EntityType::Table(self.convert_table_type(&ty))
+                            EntityType::Table(self.convert_table_type(&ty)?)
                         }
 
                         // doesn't get past validation
@@ -352,7 +353,7 @@ impl<'a, 'data> ModuleEnvironment<'a, 'data> {
 
                 for entry in tables {
                     let wasmparser::Table { ty, init } = entry?;
-                    let table = self.convert_table_type(&ty);
+                    let table = self.convert_table_type(&ty)?;
                     let plan = TablePlan::for_table(table, &self.tunables);
                     self.result.module.table_plans.push(plan);
                     let init = match init {
@@ -540,7 +541,7 @@ impl<'a, 'data> ModuleEnvironment<'a, 'data> {
                 self.result.debuginfo.wasm_file.code_section_offset = range.start as u64;
             }
 
-            Payload::CodeSectionEntry(mut body) => {
+            Payload::CodeSectionEntry(body) => {
                 let validator = self.validator.code_section_entry(&body)?;
                 let func_index =
                     self.result.code_index + self.result.module.num_imported_funcs as u32;
@@ -566,8 +567,7 @@ impl<'a, 'data> ModuleEnvironment<'a, 'data> {
                             params: sig.params().into(),
                         });
                 }
-                self.prescan_code_section(body.get_operators_reader()?)?;
-                body.allow_memarg64(self.validator.features().contains(WasmFeatures::MEMORY64));
+                self.prescan_code_section(&body)?;
                 self.result.function_body_inputs.push(FunctionBodyData {
                     validator,
                     body,
@@ -617,24 +617,11 @@ impl<'a, 'data> ModuleEnvironment<'a, 'data> {
                         } => {
                             let range = mk_range(&mut self.result.total_data)?;
                             let memory_index = MemoryIndex::from_u32(memory_index);
-                            let mut offset_expr_reader = offset_expr.get_binary_reader();
-                            let (base, offset) = match offset_expr_reader.read_operator()? {
-                                Operator::I32Const { value } => (None, value.unsigned().into()),
-                                Operator::I64Const { value } => (None, value.unsigned()),
-                                Operator::GlobalGet { global_index } => {
-                                    (Some(GlobalIndex::from_u32(global_index)), 0)
-                                }
-                                s => {
-                                    bail!(WasmError::Unsupported(format!(
-                                        "unsupported init expr in data section: {:?}",
-                                        s
-                                    )));
-                                }
-                            };
+                            let (offset, escaped) = ConstExpr::from_wasmparser(offset_expr)?;
+                            debug_assert!(escaped.is_empty());
 
                             initializers.push(MemoryInitializer {
                                 memory_index,
-                                base,
                                 offset,
                                 data: range,
                             });
@@ -663,13 +650,6 @@ impl<'a, 'data> ModuleEnvironment<'a, 'data> {
                 // the passive count, do not reserve anything here.
             }
 
-            Payload::CustomSection(s) if s.name() == "name" => {
-                let result = self.name_section(NameSectionReader::new(s.data(), s.data_offset()));
-                if let Err(e) = result {
-                    log::warn!("failed to parse name section {:?}", e);
-                }
-            }
-
             Payload::CustomSection(s)
                 if s.name() == "webidl-bindings" || s.name() == "wasm-interface-types" =>
             {
@@ -689,7 +669,7 @@ and for re-adding support for interface types you can see this issue:
             }
 
             Payload::CustomSection(s) => {
-                self.register_dwarf_section(&s);
+                self.register_custom_section(&s);
             }
 
             // It's expected that validation will probably reject other
@@ -720,9 +700,9 @@ and for re-adding support for interface types you can see this issue:
     ///   index in this count for each function, so we can generate
     ///   its code (with accesses to its own `call_indirect` callsite
     ///   caches) in parallel.
-    fn prescan_code_section(&mut self, reader: OperatorsReader<'data>) -> Result<()> {
+    fn prescan_code_section(&mut self, body: &FunctionBody<'_>) -> Result<()> {
         if self.tunables.cache_call_indirects {
-            for op in reader {
+            for op in body.get_operators_reader()? {
                 let op = op?;
                 match op {
                     // Check whether a table may be mutated by any
@@ -736,7 +716,14 @@ and for re-adding support for interface types you can see this issue:
                     | Operator::TableCopy {
                         dst_table: table, ..
                     } => {
-                        self.flag_written_table(TableIndex::from_u32(table));
+                        // We haven't yet validated the body during
+                        // this pre-scan, so we need to check that
+                        // `dst_table` is in bounds. Ignore if not:
+                        // we'll catch the error later.
+                        let table = TableIndex::from_u32(table);
+                        if table.index() < self.result.module.table_plans.len() {
+                            self.flag_written_table(table);
+                        }
                     }
                     // Count the `call_indirect` sites so we can
                     // assign them unique slots.
@@ -774,11 +761,24 @@ and for re-adding support for interface types you can see this issue:
         Ok(())
     }
 
-    fn register_dwarf_section(&mut self, section: &CustomSectionReader<'data>) {
-        let name = section.name().trim_end_matches(".dwo");
-        if !name.starts_with(".debug_") {
-            return;
+    fn register_custom_section(&mut self, section: &CustomSectionReader<'data>) {
+        match section.as_known() {
+            KnownCustom::Name(name) => {
+                let result = self.name_section(name);
+                if let Err(e) = result {
+                    log::warn!("failed to parse name section {:?}", e);
+                }
+            }
+            _ => {
+                let name = section.name().trim_end_matches(".dwo");
+                if name.starts_with(".debug_") {
+                    self.dwarf_section(name, section);
+                }
+            }
         }
+    }
+
+    fn dwarf_section(&mut self, name: &str, section: &CustomSectionReader<'data>) {
         if !self.tunables.generate_native_debuginfo && !self.tunables.parse_wasm_debuginfo {
             self.result.has_unparsed_debuginfo = true;
             return;
@@ -969,6 +969,13 @@ impl TypeConvert for ModuleEnvironment<'_, '_> {
     fn lookup_heap_type(&self, index: wasmparser::UnpackedIndex) -> WasmHeapType {
         WasmparserTypeConverter::new(&self.types, &self.result.module).lookup_heap_type(index)
     }
+
+    fn lookup_type_index(
+        &self,
+        index: wasmparser::UnpackedIndex,
+    ) -> wasmtime_types::EngineOrModuleTypeIndex {
+        WasmparserTypeConverter::new(&self.types, &self.result.module).lookup_type_index(index)
+    }
 }
 
 impl ModuleTranslation<'_> {
@@ -1030,11 +1037,27 @@ impl ModuleTranslation<'_> {
                 segments: Vec::new(),
             });
         }
-        let mut idx = 0;
-        let ok = self.module.memory_initialization.init_memory(
-            &mut (),
-            InitMemory::CompileTime(&self.module),
-            |(), memory, init| {
+
+        struct InitMemoryAtCompileTime<'a> {
+            module: &'a Module,
+            info: &'a mut PrimaryMap<MemoryIndex, Memory>,
+            idx: usize,
+        }
+        impl InitMemory for InitMemoryAtCompileTime<'_> {
+            fn memory_size_in_pages(&mut self, memory_index: MemoryIndex) -> u64 {
+                self.module.memory_plans[memory_index].memory.minimum
+            }
+
+            fn eval_offset(&mut self, memory_index: MemoryIndex, expr: &ConstExpr) -> Option<u64> {
+                let mem64 = self.module.memory_plans[memory_index].memory.memory64;
+                match expr.ops() {
+                    &[ConstOp::I32Const(offset)] if !mem64 => Some(offset.unsigned().into()),
+                    &[ConstOp::I64Const(offset)] if mem64 => Some(offset.unsigned()),
+                    _ => None,
+                }
+            }
+
+            fn write(&mut self, memory: MemoryIndex, init: &StaticMemoryInitializer) -> bool {
                 // Currently `Static` only applies to locally-defined memories,
                 // so if a data segment references an imported memory then
                 // transitioning to a `Static` memory initializer is not
@@ -1042,18 +1065,26 @@ impl ModuleTranslation<'_> {
                 if self.module.defined_memory_index(memory).is_none() {
                     return false;
                 };
-                let info = &mut info[memory];
+                let info = &mut self.info[memory];
                 let data_len = u64::from(init.data.end - init.data.start);
                 if data_len > 0 {
                     info.data_size += data_len;
                     info.min_addr = info.min_addr.min(init.offset);
                     info.max_addr = info.max_addr.max(init.offset + data_len);
-                    info.segments.push((idx, init.clone()));
+                    info.segments.push((self.idx, init.clone()));
                 }
-                idx += 1;
+                self.idx += 1;
                 true
-            },
-        );
+            }
+        }
+        let ok = self
+            .module
+            .memory_initialization
+            .init_memory(&mut InitMemoryAtCompileTime {
+                idx: 0,
+                module: &self.module,
+                info: &mut info,
+            });
         if !ok {
             return;
         }
@@ -1267,19 +1298,15 @@ impl ModuleTranslation<'_> {
                 .table
                 .wasm_ty
                 .heap_type
+                .top()
             {
-                WasmHeapType::Func | WasmHeapType::ConcreteFunc(_) | WasmHeapType::NoFunc => {}
+                WasmHeapTopType::Func => {}
                 // If this is not a funcref table, then we can't support a
                 // pre-computed table of function indices. Technically this
                 // initializer won't trap so we could continue processing
                 // segments, but that's left as a future optimization if
                 // necessary.
-                WasmHeapType::Extern
-                | WasmHeapType::Any
-                | WasmHeapType::I31
-                | WasmHeapType::Array
-                | WasmHeapType::ConcreteArray(_)
-                | WasmHeapType::None => break,
+                WasmHeapTopType::Any | WasmHeapTopType::Extern => break,
             }
 
             // Function indices can be optimized here, but fully general

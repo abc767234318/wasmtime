@@ -1,5 +1,6 @@
 use crate::memory::{LinearMemory, MemoryCreator};
 use crate::module::BareModuleInfo;
+use crate::prelude::*;
 use crate::runtime::vm::mpk::ProtectionKey;
 use crate::runtime::vm::{
     CompiledModuleId, GcHeapAllocationIndex, Imports, InstanceAllocationRequest, InstanceAllocator,
@@ -9,12 +10,12 @@ use crate::runtime::vm::{
 };
 use crate::store::{InstanceId, StoreOpaque};
 use crate::MemoryType;
+use alloc::sync::Arc;
 use anyhow::{anyhow, Result};
-use std::ops::Range;
-use std::sync::Arc;
+use core::ops::Range;
 use wasmtime_environ::{
     DefinedMemoryIndex, DefinedTableIndex, EntityIndex, HostPtr, MemoryPlan, MemoryStyle, Module,
-    VMOffsets, WASM_PAGE_SIZE,
+    VMOffsets,
 };
 
 #[cfg(feature = "component-model")]
@@ -106,7 +107,7 @@ impl RuntimeLinearMemory for LinearMemoryProxy {
         true
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
         self
     }
 
@@ -128,8 +129,8 @@ impl RuntimeMemoryCreator for MemoryCreatorProxy {
     ) -> Result<Box<dyn RuntimeLinearMemory>> {
         let ty = MemoryType::from_wasmtime_memory(&plan.memory);
         let reserved_size_in_bytes = match plan.style {
-            MemoryStyle::Static { bound } => {
-                Some(usize::try_from(bound * (WASM_PAGE_SIZE as u64)).unwrap())
+            MemoryStyle::Static { byte_reservation } => {
+                Some(usize::try_from(byte_reservation).unwrap())
             }
             MemoryStyle::Dynamic { .. } => None,
         };
@@ -247,7 +248,7 @@ unsafe impl InstanceAllocatorImpl for SingleMemoryInstance<'_> {
     }
 
     #[cfg(feature = "async")]
-    unsafe fn deallocate_fiber_stack(&self, _stack: &wasmtime_fiber::FiberStack) {
+    unsafe fn deallocate_fiber_stack(&self, _stack: wasmtime_fiber::FiberStack) {
         unreachable!()
     }
 

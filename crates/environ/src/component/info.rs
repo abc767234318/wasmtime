@@ -9,7 +9,7 @@
 //
 // * This representation of a `Component` avoids the need to create a
 //   `PrimaryMap` of some form for each of the index spaces within a component.
-//   This is less so an issue about allocations and moreso that this information
+//   This is less so an issue about allocations and more so that this information
 //   generally just isn't needed any time after instantiation. Avoiding creating
 //   these altogether helps components be lighter weight at runtime and
 //   additionally accelerates instantiation.
@@ -47,8 +47,8 @@
 // requirements of embeddings change over time.
 
 use crate::component::*;
+use crate::prelude::*;
 use crate::{EntityIndex, PrimaryMap, WasmValType};
-use indexmap::IndexMap;
 use serde_derive::{Deserialize, Serialize};
 use wasmtime_types::ModuleInternedTypeIndex;
 

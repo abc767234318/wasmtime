@@ -1,11 +1,12 @@
 //! Definitions of runtime structures and metadata which are serialized into ELF
 //! with `bincode` as part of a module's compilation process.
 
+use crate::prelude::*;
 use crate::{DefinedFuncIndex, FilePos, FuncIndex, Module, PrimaryMap, StackMap};
+use core::fmt;
+use core::ops::Range;
+use core::str;
 use serde_derive::{Deserialize, Serialize};
-use std::fmt;
-use std::ops::Range;
-use std::str;
 use wasmtime_types::ModuleInternedTypeIndex;
 
 /// Secondary in-memory results of function compilation.
@@ -18,8 +19,6 @@ pub struct CompiledFunctionInfo {
     pub wasm_func_loc: FunctionLoc,
     /// A trampoline for array callers (e.g. `Func::new`) calling into this function (if needed).
     pub array_to_wasm_trampoline: Option<FunctionLoc>,
-    /// A trampoline for native callers (e.g. `Func::wrap`) calling into this function (if needed).
-    pub native_to_wasm_trampoline: Option<FunctionLoc>,
 }
 
 /// Information about a function, such as trap information, address map,
@@ -33,7 +32,7 @@ pub struct WasmFunctionInfo {
 
 /// Description of where a function is located in the text section of a
 /// compiled image.
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct FunctionLoc {
     /// The byte offset from the start of the text section where this
     /// function starts.
@@ -69,9 +68,9 @@ pub struct CompiledModuleInfo {
     /// Sorted list, by function index, of names we have for this module.
     pub func_names: Vec<FunctionName>,
 
-    /// Metadata about wasm-to-native trampolines. Used when exposing a native
+    /// Metadata about wasm-to-array trampolines. Used when exposing a native
     /// callee (e.g. `Func::wrap`) to a Wasm caller. Sorted by signature index.
-    pub wasm_to_native_trampolines: Vec<(ModuleInternedTypeIndex, FunctionLoc)>,
+    pub wasm_to_array_trampolines: Vec<(ModuleInternedTypeIndex, FunctionLoc)>,
 
     /// General compilation metadata.
     pub meta: Metadata,

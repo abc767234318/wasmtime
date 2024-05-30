@@ -1,5 +1,6 @@
 //! Implementation of `externref` in Wasmtime.
 
+use crate::prelude::*;
 use crate::runtime::vm::VMGcRef;
 use crate::{
     store::{AutoAssertNoGc, StoreOpaque},
@@ -7,8 +8,9 @@ use crate::{
     Result, RootSet, Rooted, StoreContext, StoreContextMut, ValRaw, ValType, WasmTy,
 };
 use anyhow::Context;
-use std::any::Any;
-use std::num::NonZeroU64;
+use core::any::Any;
+use core::mem;
+use core::mem::MaybeUninit;
 
 /// An opaque, GC-managed reference to some host data that can be passed to
 /// WebAssembly.
@@ -114,7 +116,7 @@ unsafe impl GcRefImpl for ExternRef {
     #[allow(private_interfaces)]
     fn transmute_ref(index: &GcRootIndex) -> &Self {
         // Safety: `ExternRef` is a newtype of a `GcRootIndex`.
-        let me: &Self = unsafe { std::mem::transmute(index) };
+        let me: &Self = unsafe { mem::transmute(index) };
 
         // Assert we really are just a newtype of a `GcRootIndex`.
         assert!(matches!(
@@ -201,8 +203,10 @@ impl ExternRef {
         let gc_ref = ctx
             .gc_store_mut()?
             .alloc_externref(value)
+            .err2anyhow()
             .context("unrecoverable error when allocating new `externref`")?
             .map_err(|x| GcHeapOutOfMemory::<T>::new(*x.downcast().unwrap()))
+            .err2anyhow()
             .context("failed to allocate `externref`")?;
 
         let mut ctx = AutoAssertNoGc::new(ctx);
@@ -253,8 +257,10 @@ impl ExternRef {
         let gc_ref = ctx
             .gc_store_mut()?
             .alloc_externref(value)
+            .err2anyhow()
             .context("unrecoverable error when allocating new `externref`")?
             .map_err(|x| GcHeapOutOfMemory::<T>::new(*x.downcast().unwrap()))
+            .err2anyhow()
             .context("failed to allocate `externref`")?;
 
         let mut ctx = AutoAssertNoGc::new(ctx);
@@ -416,10 +422,6 @@ impl ExternRef {
 }
 
 unsafe impl WasmTy for Rooted<ExternRef> {
-    // TODO: this should be `VMGcRef` but Cranelift currently doesn't support
-    // using r32 types when targeting 64-bit platforms.
-    type Abi = NonZeroU64;
-
     #[inline]
     fn valtype() -> ValType {
         ValType::Ref(RefType::new(false, HeapType::Extern))
@@ -435,36 +437,20 @@ unsafe impl WasmTy for Rooted<ExternRef> {
         unreachable!()
     }
 
-    #[inline]
-    fn is_non_i31_gc_ref(&self) -> bool {
-        true
-    }
-
-    #[inline]
-    unsafe fn abi_from_raw(raw: *mut ValRaw) -> Self::Abi {
-        let raw = (*raw).get_externref();
-        debug_assert_ne!(raw, 0);
-        NonZeroU64::new_unchecked(u64::from(raw))
-    }
-
-    #[inline]
-    unsafe fn abi_into_raw(abi: Self::Abi, raw: *mut ValRaw) {
-        let externref = u32::try_from(abi.get()).unwrap();
-        *raw = ValRaw::externref(externref);
-    }
-
-    #[inline]
-    fn into_abi(self, store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi> {
+    fn store(self, store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
         let gc_ref = self.inner.try_clone_gc_ref(store)?;
         let r64 = gc_ref.as_r64();
         store.gc_store_mut()?.expose_gc_ref_to_wasm(gc_ref);
         debug_assert_ne!(r64, 0);
-        Ok(unsafe { NonZeroU64::new_unchecked(r64) })
+        let externref = u32::try_from(r64).unwrap();
+        ptr.write(ValRaw::externref(externref));
+        Ok(())
     }
 
-    #[inline]
-    unsafe fn from_abi(abi: Self::Abi, store: &mut AutoAssertNoGc<'_>) -> Self {
-        let gc_ref = VMGcRef::from_r64(abi.get())
+    unsafe fn load(store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self {
+        let raw = ptr.get_externref();
+        debug_assert_ne!(raw, 0);
+        let gc_ref = VMGcRef::from_r64(raw.into())
             .expect("valid r64")
             .expect("non-null");
         let gc_ref = store.unwrap_gc_store_mut().clone_gc_ref(&gc_ref);
@@ -473,8 +459,6 @@ unsafe impl WasmTy for Rooted<ExternRef> {
 }
 
 unsafe impl WasmTy for Option<Rooted<ExternRef>> {
-    type Abi = u64;
-
     #[inline]
     fn valtype() -> ValType {
         ValType::EXTERNREF
@@ -491,42 +475,28 @@ unsafe impl WasmTy for Option<Rooted<ExternRef>> {
     }
 
     #[inline]
-    fn is_non_i31_gc_ref(&self) -> bool {
-        true
+    fn is_vmgcref_and_points_to_object(&self) -> bool {
+        self.is_some()
     }
 
-    #[inline]
-    unsafe fn abi_from_raw(raw: *mut ValRaw) -> Self::Abi {
-        let externref = (*raw).get_externref();
-        u64::from(externref)
+    fn store(self, store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
+        match self {
+            Some(r) => r.store(store, ptr),
+            None => {
+                ptr.write(ValRaw::externref(0));
+                Ok(())
+            }
+        }
     }
 
-    #[inline]
-    unsafe fn abi_into_raw(abi: Self::Abi, raw: *mut ValRaw) {
-        let externref = u32::try_from(abi).unwrap();
-        *raw = ValRaw::externref(externref);
-    }
-
-    #[inline]
-    fn into_abi(self, store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi> {
-        Ok(if let Some(x) = self {
-            <Rooted<ExternRef> as WasmTy>::into_abi(x, store)?.get()
-        } else {
-            0
-        })
-    }
-
-    #[inline]
-    unsafe fn from_abi(abi: Self::Abi, store: &mut AutoAssertNoGc<'_>) -> Self {
-        let gc_ref = VMGcRef::from_r64(abi).expect("valid r64")?;
+    unsafe fn load(store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self {
+        let gc_ref = VMGcRef::from_r64(ptr.get_externref().into()).expect("valid r64")?;
         let gc_ref = store.unwrap_gc_store_mut().clone_gc_ref(&gc_ref);
         Some(ExternRef::from_cloned_gc_ref(store, gc_ref))
     }
 }
 
 unsafe impl WasmTy for ManuallyRooted<ExternRef> {
-    type Abi = NonZeroU64;
-
     #[inline]
     fn valtype() -> ValType {
         ValType::Ref(RefType::new(false, HeapType::Extern))
@@ -543,34 +513,24 @@ unsafe impl WasmTy for ManuallyRooted<ExternRef> {
     }
 
     #[inline]
-    fn is_non_i31_gc_ref(&self) -> bool {
+    fn is_vmgcref_and_points_to_object(&self) -> bool {
         true
     }
 
-    #[inline]
-    unsafe fn abi_from_raw(raw: *mut ValRaw) -> Self::Abi {
-        let externref = (*raw).get_externref();
-        debug_assert_ne!(externref, 0);
-        NonZeroU64::new_unchecked(u64::from(externref))
-    }
-
-    #[inline]
-    unsafe fn abi_into_raw(abi: Self::Abi, raw: *mut ValRaw) {
-        let externref = u32::try_from(abi.get()).unwrap();
-        *raw = ValRaw::externref(externref);
-    }
-
-    #[inline]
-    fn into_abi(self, store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi> {
+    fn store(self, store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
         let gc_ref = self.inner.try_clone_gc_ref(store)?;
         let r64 = gc_ref.as_r64();
         store.gc_store_mut()?.expose_gc_ref_to_wasm(gc_ref);
-        Ok(unsafe { NonZeroU64::new_unchecked(r64) })
+        debug_assert_ne!(r64, 0);
+        let externref = u32::try_from(r64).unwrap();
+        ptr.write(ValRaw::externref(externref));
+        Ok(())
     }
 
-    #[inline]
-    unsafe fn from_abi(abi: Self::Abi, store: &mut AutoAssertNoGc<'_>) -> Self {
-        let gc_ref = VMGcRef::from_r64(abi.get())
+    unsafe fn load(store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self {
+        let raw = ptr.get_externref();
+        debug_assert_ne!(raw, 0);
+        let gc_ref = VMGcRef::from_r64(raw.into())
             .expect("valid r64")
             .expect("non-null");
         let gc_ref = store.unwrap_gc_store_mut().clone_gc_ref(&gc_ref);
@@ -584,8 +544,6 @@ unsafe impl WasmTy for ManuallyRooted<ExternRef> {
 }
 
 unsafe impl WasmTy for Option<ManuallyRooted<ExternRef>> {
-    type Abi = u64;
-
     #[inline]
     fn valtype() -> ValType {
         ValType::EXTERNREF
@@ -603,34 +561,24 @@ unsafe impl WasmTy for Option<ManuallyRooted<ExternRef>> {
     }
 
     #[inline]
-    fn is_non_i31_gc_ref(&self) -> bool {
-        true
+    fn is_vmgcref_and_points_to_object(&self) -> bool {
+        self.is_some()
     }
 
-    #[inline]
-    unsafe fn abi_from_raw(raw: *mut ValRaw) -> Self::Abi {
-        let externref = (*raw).get_externref();
-        u64::from(externref)
+    fn store(self, store: &mut AutoAssertNoGc<'_>, ptr: &mut MaybeUninit<ValRaw>) -> Result<()> {
+        match self {
+            Some(r) => r.store(store, ptr),
+            None => {
+                ptr.write(ValRaw::externref(0));
+                Ok(())
+            }
+        }
     }
 
-    #[inline]
-    unsafe fn abi_into_raw(abi: Self::Abi, raw: *mut ValRaw) {
-        let externref = u32::try_from(abi).unwrap();
-        *raw = ValRaw::externref(externref);
-    }
-
-    #[inline]
-    fn into_abi(self, store: &mut AutoAssertNoGc<'_>) -> Result<Self::Abi> {
-        Ok(if let Some(x) = self {
-            <ManuallyRooted<ExternRef> as WasmTy>::into_abi(x, store)?.get()
-        } else {
-            0
-        })
-    }
-
-    #[inline]
-    unsafe fn from_abi(abi: Self::Abi, store: &mut AutoAssertNoGc<'_>) -> Self {
-        let gc_ref = VMGcRef::from_r64(abi).expect("valid r64")?;
+    unsafe fn load(store: &mut AutoAssertNoGc<'_>, ptr: &ValRaw) -> Self {
+        let raw = ptr.get_externref();
+        debug_assert_ne!(raw, 0);
+        let gc_ref = VMGcRef::from_r64(raw.into()).expect("valid r64")?;
         let gc_ref = store.unwrap_gc_store_mut().clone_gc_ref(&gc_ref);
         RootSet::with_lifo_scope(store, |store| {
             let rooted = ExternRef::from_cloned_gc_ref(store, gc_ref);

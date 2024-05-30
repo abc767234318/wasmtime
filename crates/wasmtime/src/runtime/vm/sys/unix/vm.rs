@@ -1,7 +1,9 @@
+use crate::runtime::vm::sys::DecommitBehavior;
 use rustix::fd::AsRawFd;
 use rustix::mm::{mmap, mmap_anonymous, mprotect, MapFlags, MprotectFlags, ProtFlags};
 use std::fs::File;
 use std::io;
+#[cfg(feature = "std")]
 use std::sync::Arc;
 
 pub unsafe fn expose_existing_mapping(ptr: *mut u8, len: usize) -> io::Result<()> {
@@ -26,7 +28,13 @@ pub unsafe fn erase_existing_mapping(ptr: *mut u8, len: usize) -> io::Result<()>
 }
 
 #[cfg(feature = "pooling-allocator")]
-unsafe fn decommit(addr: *mut u8, len: usize) -> io::Result<()> {
+pub unsafe fn commit_pages(_addr: *mut u8, _len: usize) -> io::Result<()> {
+    // Pages are always READ | WRITE so there's nothing that needs to be done
+    // here.
+    Ok(())
+}
+
+pub unsafe fn decommit_pages(addr: *mut u8, len: usize) -> io::Result<()> {
     if len == 0 {
         return Ok(());
     }
@@ -57,58 +65,28 @@ unsafe fn decommit(addr: *mut u8, len: usize) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "pooling-allocator")]
-pub unsafe fn commit_table_pages(_addr: *mut u8, _len: usize) -> io::Result<()> {
-    // Table pages are always READ | WRITE so there's nothing that needs to be
-    // done here.
-    Ok(())
-}
-
-#[cfg(feature = "pooling-allocator")]
-pub unsafe fn decommit_table_pages(addr: *mut u8, len: usize) -> io::Result<()> {
-    decommit(addr, len)
-}
-
-#[cfg(all(feature = "pooling-allocator", feature = "async"))]
-pub unsafe fn commit_stack_pages(_addr: *mut u8, _len: usize) -> io::Result<()> {
-    // Like table pages stack pages are always READ | WRITE so nothing extra
-    // needs to be done to ensure they can be committed.
-    Ok(())
-}
-
-#[cfg(all(feature = "pooling-allocator", feature = "async"))]
-pub unsafe fn reset_stack_pages_to_zero(addr: *mut u8, len: usize) -> io::Result<()> {
-    decommit(addr, len)
-}
-
 pub fn get_page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() }
 }
 
-pub fn supports_madvise_dontneed() -> bool {
-    cfg!(target_os = "linux")
-}
-
-pub unsafe fn madvise_dontneed(ptr: *mut u8, len: usize) -> io::Result<()> {
-    cfg_if::cfg_if! {
-        if #[cfg(target_os = "linux")] {
-            rustix::mm::madvise(ptr.cast(), len, rustix::mm::Advice::LinuxDontNeed)?;
-            Ok(())
-        } else {
-            let _ = (ptr, len);
-            unreachable!();
-        }
+pub fn decommit_behavior() -> DecommitBehavior {
+    if cfg!(target_os = "linux") {
+        DecommitBehavior::RestoreOriginalMapping
+    } else {
+        DecommitBehavior::Zero
     }
 }
 
 #[derive(Debug)]
 pub enum MemoryImageSource {
+    #[cfg(feature = "std")]
     Mmap(Arc<File>),
     #[cfg(target_os = "linux")]
     Memfd(memfd::Memfd),
 }
 
 impl MemoryImageSource {
+    #[cfg(feature = "std")]
     pub fn from_file(file: &Arc<File>) -> Option<MemoryImageSource> {
         Some(MemoryImageSource::Mmap(file.clone()))
     }
@@ -124,6 +102,7 @@ impl MemoryImageSource {
         // in-memory file to represent the heap image. This anonymous
         // file is then used as the basis for further mmaps.
 
+        use crate::prelude::*;
         use std::io::{ErrorKind, Write};
 
         // Create the memfd. It needs a name, but the documentation for
@@ -139,9 +118,9 @@ impl MemoryImageSource {
             Err(memfd::Error::Create(err)) if err.kind() == ErrorKind::Unsupported => {
                 return Ok(None)
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e.into_anyhow()),
         };
-        memfd.as_file().write_all(data)?;
+        memfd.as_file().write_all(data).err2anyhow()?;
 
         // Seal the memfd's data and length.
         //
@@ -158,21 +137,24 @@ impl MemoryImageSource {
         // extra-super-sure that it never changes, and because
         // this costs very little, we use the kernel's "seal" API
         // to make the memfd image permanently read-only.
-        memfd.add_seals(&[
-            memfd::FileSeal::SealGrow,
-            memfd::FileSeal::SealShrink,
-            memfd::FileSeal::SealWrite,
-            memfd::FileSeal::SealSeal,
-        ])?;
+        memfd
+            .add_seals(&[
+                memfd::FileSeal::SealGrow,
+                memfd::FileSeal::SealShrink,
+                memfd::FileSeal::SealWrite,
+                memfd::FileSeal::SealSeal,
+            ])
+            .err2anyhow()?;
 
         Ok(Some(MemoryImageSource::Memfd(memfd)))
     }
 
     fn as_file(&self) -> &File {
-        match self {
-            MemoryImageSource::Mmap(file) => file,
+        match *self {
+            #[cfg(feature = "std")]
+            MemoryImageSource::Mmap(ref file) => file,
             #[cfg(target_os = "linux")]
-            MemoryImageSource::Memfd(memfd) => memfd.as_file(),
+            MemoryImageSource::Memfd(ref memfd) => memfd.as_file(),
         }
     }
 

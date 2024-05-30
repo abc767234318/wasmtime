@@ -30,7 +30,7 @@ impl WasiHttpCtx {
 }
 
 /// A trait which provides internal WASI HTTP state.
-pub trait WasiHttpView: Send {
+pub trait WasiHttpView {
     /// Returns a mutable reference to the WASI HTTP context.
     fn ctx(&mut self) -> &mut WasiHttpCtx;
 
@@ -71,16 +71,44 @@ pub trait WasiHttpView: Send {
         &mut self,
         request: hyper::Request<HyperOutgoingBody>,
         config: OutgoingRequestConfig,
-    ) -> crate::HttpResult<HostFutureIncomingResponse>
-    where
-        Self: Sized,
-    {
+    ) -> crate::HttpResult<HostFutureIncomingResponse> {
         Ok(default_send_request(request, config))
     }
 
     /// Whether a given header should be considered forbidden and not allowed.
     fn is_forbidden_header(&mut self, _name: &HeaderName) -> bool {
         false
+    }
+}
+
+impl<T: ?Sized + WasiHttpView> WasiHttpView for &mut T {
+    fn ctx(&mut self) -> &mut WasiHttpCtx {
+        T::ctx(self)
+    }
+
+    fn table(&mut self) -> &mut ResourceTable {
+        T::table(self)
+    }
+
+    fn new_response_outparam(
+        &mut self,
+        result: tokio::sync::oneshot::Sender<
+            Result<hyper::Response<HyperOutgoingBody>, types::ErrorCode>,
+        >,
+    ) -> wasmtime::Result<Resource<HostResponseOutparam>> {
+        T::new_response_outparam(self, result)
+    }
+
+    fn send_request(
+        &mut self,
+        request: hyper::Request<HyperOutgoingBody>,
+        config: OutgoingRequestConfig,
+    ) -> crate::HttpResult<HostFutureIncomingResponse> {
+        T::send_request(self, request, config)
+    }
+
+    fn is_forbidden_header(&mut self, name: &HeaderName) -> bool {
+        T::is_forbidden_header(self, name)
     }
 }
 
@@ -159,7 +187,14 @@ pub async fn default_send_request_handler(
         between_bytes_timeout,
     }: OutgoingRequestConfig,
 ) -> Result<IncomingResponse, types::ErrorCode> {
-    let Some(authority) = request.uri().authority().map(ToString::to_string) else {
+    let authority = if let Some(authority) = request.uri().authority() {
+        if authority.port().is_some() {
+            authority.to_string()
+        } else {
+            let port = if use_tls { 443 } else { 80 };
+            format!("{}:{port}", authority.to_string())
+        }
+    } else {
         return Err(types::ErrorCode::HttpRequestUriInvalid);
     };
     let tcp_stream = timeout(connect_timeout, TcpStream::connect(&authority))

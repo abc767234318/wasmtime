@@ -1,6 +1,7 @@
 //! A `Compilation` contains the compiled function bodies for a WebAssembly
 //! module.
 
+use crate::prelude::*;
 use crate::{obj, Tunables};
 use crate::{
     BuiltinFunctionIndex, DefinedFuncIndex, FlagValue, FuncIndex, FunctionLoc, ObjectKind,
@@ -14,7 +15,6 @@ use std::borrow::Cow;
 use std::fmt;
 use std::path;
 use std::sync::Arc;
-use thiserror::Error;
 
 mod address_map;
 mod module_artifacts;
@@ -29,19 +29,44 @@ pub use self::module_types::*;
 pub use self::trap_encoding::*;
 
 /// An error while compiling WebAssembly to machine code.
-#[derive(Error, Debug)]
+#[derive(Debug)]
 pub enum CompileError {
-    /// A wasm translation error occured.
-    #[error("WebAssembly translation error")]
-    Wasm(#[from] WasmError),
+    /// A wasm translation error occurred.
+    Wasm(WasmError),
 
-    /// A compilation error occured.
-    #[error("Compilation error: {0}")]
+    /// A compilation error occurred.
     Codegen(String),
 
-    /// A compilation error occured.
-    #[error("Debug info is not supported with this configuration")]
+    /// A compilation error occurred.
     DebugInfoNotSupported,
+}
+
+impl fmt::Display for CompileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CompileError::Wasm(_) => write!(f, "WebAssembly translation error"),
+            CompileError::Codegen(s) => write!(f, "Compilation error: {s}"),
+            CompileError::DebugInfoNotSupported => {
+                write!(f, "Debug info is not supported with this configuration")
+            }
+        }
+    }
+}
+
+impl From<WasmError> for CompileError {
+    fn from(err: WasmError) -> CompileError {
+        CompileError::Wasm(err)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for CompileError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            CompileError::Wasm(e) => Some(e),
+            _ => None,
+        }
+    }
 }
 
 /// What relocations can be applied against.
@@ -184,24 +209,12 @@ pub trait Compiler: Send + Sync {
         index: DefinedFuncIndex,
     ) -> Result<Box<dyn Any + Send>, CompileError>;
 
-    /// Compile a trampoline for a native-call host function caller calling the
-    /// `index`th Wasm function.
-    ///
-    /// The trampoline should save the necessary state to record the
-    /// host-to-Wasm transition (e.g. registers used for fast stack walking).
-    fn compile_native_to_wasm_trampoline(
-        &self,
-        translation: &ModuleTranslation<'_>,
-        types: &ModuleTypesBuilder,
-        index: DefinedFuncIndex,
-    ) -> Result<Box<dyn Any + Send>, CompileError>;
-
-    /// Compile a trampoline for a Wasm caller calling a native callee with the
+    /// Compile a trampoline for a Wasm caller calling a array callee with the
     /// given signature.
     ///
     /// The trampoline should save the necessary state to record the
     /// Wasm-to-host transition (e.g. registers used for fast stack walking).
-    fn compile_wasm_to_native_trampoline(
+    fn compile_wasm_to_array_trampoline(
         &self,
         wasm_func_ty: &WasmFuncType,
     ) -> Result<Box<dyn Any + Send>, CompileError>;
@@ -260,39 +273,6 @@ pub trait Compiler: Send + Sync {
         funcs: &[(String, Box<dyn Any + Send>)],
         resolve_reloc: &dyn Fn(usize, RelocationTarget) -> usize,
     ) -> Result<Vec<(SymbolId, FunctionLoc)>>;
-
-    /// Inserts two trampolines into `obj` for a array-call host function:
-    ///
-    /// 1. A wasm-call trampoline: A trampoline that takes arguments in their
-    ///    wasm-call locations, moves them to their array-call locations, calls
-    ///    the array-call host function, and finally moves the return values
-    ///    from the array-call locations to the wasm-call return
-    ///    locations. Additionally, this trampoline manages the wasm-to-host
-    ///    state transition for the runtime.
-    ///
-    /// 2. A native-call trampoline: A trampoline that takes arguments in their
-    ///    native-call locations, moves them to their array-call locations,
-    ///    calls the array-call host function, and finally moves the return
-    ///    values from the array-call locations to the native-call return
-    ///    locations. Does not need to manage any wasm/host state transitions,
-    ///    since both caller and callee are on the host side.
-    ///
-    /// This will configure the same sections as `append_code`, but will likely
-    /// be much smaller.
-    ///
-    /// The two returned `FunctionLoc` structures describe where to find these
-    /// trampolines in the text section, respectively.
-    ///
-    /// These trampolines are only valid for in-process JIT usage. They bake in
-    /// the function pointer to the host code.
-    fn emit_trampolines_for_array_call_host_func(
-        &self,
-        ty: &WasmFuncType,
-        // Actually `host_fn: VMArrayCallFunction` but that type is not
-        // available in `wasmtime-environ`.
-        host_fn: usize,
-        obj: &mut Object<'static>,
-    ) -> Result<(FunctionLoc, FunctionLoc)>;
 
     /// Creates a new `Object` file which is used to build the results of a
     /// compilation into.

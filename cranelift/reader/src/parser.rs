@@ -245,8 +245,11 @@ impl Context {
     fn add_ss(&mut self, ss: StackSlot, data: StackSlotData, loc: Location) -> ParseResult<()> {
         self.map.def_ss(ss, loc)?;
         while self.function.sized_stack_slots.next_key().index() <= ss.index() {
-            self.function
-                .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 0));
+            self.function.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                0,
+                0,
+            ));
         }
         self.function.sized_stack_slots[ss] = data;
         Ok(())
@@ -1483,6 +1486,7 @@ impl<'a> Parser<'a> {
     //                   | "spill_slot"
     //                   | "incoming_arg"
     //                   | "outgoing_arg"
+    // stack-slot-flag ::= "align" "=" Bytes
     fn parse_stack_slot_decl(&mut self) -> ParseResult<(StackSlot, StackSlotData)> {
         let ss = self.match_ss("expected stack slot number: ss«n»")?;
         self.match_token(Token::Equal, "expected '=' in stack slot declaration")?;
@@ -1498,7 +1502,30 @@ impl<'a> Parser<'a> {
         if bytes > i64::from(u32::MAX) {
             return err!(self.loc, "stack slot too large");
         }
-        let data = StackSlotData::new(kind, bytes as u32);
+
+        // Parse flags.
+        let align = if self.token() == Some(Token::Comma) {
+            self.consume();
+            self.match_token(
+                Token::Identifier("align"),
+                "expected a valid stack-slot flag (currently only `align`)",
+            )?;
+            self.match_token(Token::Equal, "expected `=` after flag")?;
+            let align: i64 = self
+                .match_imm64("expected alignment-size after `align` flag")?
+                .into();
+            u32::try_from(align)
+                .map_err(|_| self.error("alignment must be a 32-bit unsigned integer"))?
+        } else {
+            1
+        };
+
+        if !align.is_power_of_two() {
+            return err!(self.loc, "stack slot alignment is not a power of two");
+        }
+        let align_shift = u8::try_from(align.ilog2()).unwrap(); // Always succeeds: range 0..=31.
+
+        let data = StackSlotData::new(kind, bytes as u32, align_shift);
 
         // Collect any trailing comments.
         self.token();
@@ -2016,13 +2043,18 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    // Parse parenthesized list of block parameters. Returns a vector of (u32, Type) pairs with the
-    // value numbers of the defined values and the defined types.
+    // Parse parenthesized list of block parameters.
     //
-    // block-params ::= * "(" block-param { "," block-param } ")"
+    // block-params ::= * "(" ( block-param { "," block-param } )? ")"
     fn parse_block_params(&mut self, ctx: &mut Context, block: Block) -> ParseResult<()> {
-        // block-params ::= * "(" block-param { "," block-param } ")"
+        // block-params ::= * "(" ( block-param { "," block-param } )? ")"
         self.match_token(Token::LPar, "expected '(' before block parameters")?;
+
+        // block-params ::= "(" * ")"
+        if self.token() == Some(Token::RPar) {
+            self.consume();
+            return Ok(());
+        }
 
         // block-params ::= "(" * block-param { "," block-param } ")"
         self.parse_block_param(ctx, block)?;
@@ -3779,7 +3811,7 @@ mod tests {
             "print: %default()"
         );
 
-        // Demonstrate some unparseable cases.
+        // Demonstrate some unparsable cases.
         assert!(parse("print", &sig(&[I32], &[I32])).is_err());
         assert!(parse("print:", &sig(&[], &[])).is_err());
         assert!(parse("run: ", &sig(&[], &[])).is_err());
