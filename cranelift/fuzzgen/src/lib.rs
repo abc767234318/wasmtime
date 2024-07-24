@@ -48,6 +48,7 @@ impl<'r, 'data> FuzzGen<'r, 'data>
 where
     'data: 'r,
 {
+    // cranelift fuzzgen一开始调用FuzzGen::new()方法
     pub fn new(u: &'r mut Unstructured<'data>) -> Self {
         Self {
             u,
@@ -146,6 +147,7 @@ where
         Ok(ctx.func)
     }
 
+    // 这个是生成函数的
     pub fn generate_func(
         &mut self,
         name: UserFuncName,
